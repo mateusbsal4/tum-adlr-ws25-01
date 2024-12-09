@@ -1,0 +1,6 @@
+{
+  "seed": 1,
+  "meta_batch_size": 10,
+  "n_epochs": 10,
+  "episode_per_task": 10
+}

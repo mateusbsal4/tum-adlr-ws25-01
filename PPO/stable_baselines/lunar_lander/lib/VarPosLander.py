@@ -656,7 +656,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
 
         reward = 0
         shaping = (
-            -100 * np.sqrt((state[0] -self.target_x)**2 + (state[1]-self.target_y)**2)
+            -100 * np.sqrt((state[0] - self.target_x)**2 + (state[1]-self.target_y)**2)
             - 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])
             - 100 * abs(state[4])
             + 10 * state[6]

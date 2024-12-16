@@ -14,7 +14,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.results_plotter import load_results, ts2xy
 
 from lib.VarPosLander import LunarLanderTargetPos
-from lib.reward_plotter import SaveOnBestTrainingRewardCallback
+from lib.BestModelExtractor import SaveOnBestTrainingRewardCallback
 
 try:
     from render_browser import render_browser
@@ -44,7 +44,7 @@ def train(env_id, total_timesteps, log_rewards, model_dir, log_dir):
         log_dir = os.path.join(log_dir, "train", model_name)
         os.makedirs(log_dir, exist_ok=True)
         # if you want the reward plot, add --log_rewards as argument when you call file
-        env = Monitor(env, log_dir)
+        env = Monitor(env, filename=log_dir)
         # Create the callback: check every 1000 steps
         callback = SaveOnBestTrainingRewardCallback(check_freq=1000, log_dir=log_dir)
         
@@ -67,7 +67,7 @@ def train(env_id, total_timesteps, log_rewards, model_dir, log_dir):
     env.close()
 
 
-def evaluate(env_id, model_path, render_mode):
+def evaluate(env_id, model_path, render_mode, log_reward):
     """Evaluate a trained PPO agent in the specified environment."""
     if render_mode == "browser" and render_browser is None:
         raise ImportError("render_browser is not installed or available.")

@@ -897,34 +897,3 @@ class LunarLanderContinuous:
             "To use this environment, instead create it by specifying the continuous keyword in gym.make, i.e.\n"
             'gym.make("LunarLander-v3", continuous=True)'
         )
-
-@render_browser
-def test_policy():
-    env = gym.make("LunarLanderTargetPos", render_mode="rgb_array", target_x=10, target_y = 3)
-    # Load or train the model
-    model = PPO("MlpPolicy", env, verbose=1)
-    model.learn(total_timesteps=2000)   
-    model.save("ppo_lunar")
-
-    # Reload the trained model
-    model = PPO.load("ppo_lunar")
-
-    # Reset the environment and run the policy
-    obs, info = env.reset() 
-    episode_over = False
-    while not episode_over:
-        action, _states = model.predict(obs)        #ppo policy
-        obs, reward, terminated, truncated, info = env.step(action)
-        episode_over = terminated or truncated
-        print("X coord: ", obs[0])
-        # Yield the rendered frame as a NumPy array
-        yield env.render()
-        time.sleep(0.02)
-    env.close()
-
-
-register(
-    id="LunarLanderTargetPos",
-    entry_point=LunarLanderTargetPos,
-)
-test_policy()

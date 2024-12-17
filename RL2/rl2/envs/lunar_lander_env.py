@@ -8,7 +8,8 @@ import numpy as np
 
 import gymnasium as gym
 from gymnasium.wrappers import TimeLimit
-import var_lander_gym import LunarLanderTargetPos, register 
+import os
+from .var_lander_gym import LunarLanderTargetPos, register 
 
 from rl2.envs.abstract import MetaEpisodicEnv
 
@@ -29,7 +30,11 @@ class LunarLanderEnv(MetaEpisodicEnv):
         self.env = gym.make("LunarLanderTargetPos", render_mode="rgb_array", target_x=self.target_x, target_y = self.target_y)
         self.env = TimeLimit(self.env, self.max_ep_length)      #Wrapper which sets truncated flag to True when maximum episode length is exceeded
 
-
+    def max_episode_len(self) -> int:
+        """
+        Return the maximum episode length.
+        """
+        return self.max_ep_length
 
     def new_env(self) -> None:
         """

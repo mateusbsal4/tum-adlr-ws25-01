@@ -74,7 +74,7 @@ def create_argparser():
 
 def create_env(environment, num_states, num_actions, max_episode_len):
     if environment == 'lander':
-        return LunarLanderEnv(max_episode_length = max_episode_len, )
+        return LunarLanderEnv(max_episode_length = max_episode_len)
     if environment == 'bandit':
         return BanditEnv(
             num_actions=num_actions)

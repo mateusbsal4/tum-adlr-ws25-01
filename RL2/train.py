@@ -9,7 +9,7 @@ import torch as tc
 
 from rl2.envs.bandit_env import BanditEnv
 from rl2.envs.mdp_env import MDPEnv
-from rl2.envs.var_lander import LunarLanderTargetPos
+from rl2.envs.lunar_lander_env import LunarLanderEnv
 
 from rl2.agents.preprocessing.lunar import LunarLanderPreprocessing
 from rl2.agents.preprocessing.tabular import MABPreprocessing, MDPPreprocessing
@@ -74,7 +74,7 @@ def create_argparser():
 
 def create_env(environment, num_states, num_actions, max_episode_len):
     if environment == 'lander':
-        return LunarLanderTargetPos()
+        return LunarLanderEnv()
     if environment == 'bandit':
         return BanditEnv(
             num_actions=num_actions)
@@ -88,9 +88,7 @@ def create_env(environment, num_states, num_actions, max_episode_len):
 
 def create_preprocessing(environment, num_states, num_actions):
     if environment == 'lander':
-        return LunarLanderPreprocessing(
-            num_actions=num_actions
-        )
+        return LunarLanderPreprocessing(num_actions = num_actions)
     if environment == 'bandit':
         return MABPreprocessing(
             num_actions=num_actions)

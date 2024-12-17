@@ -1,4 +1,3 @@
-
 import time
 import math
 from typing import TYPE_CHECKING, Optional
@@ -316,20 +315,6 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             self.action_space = spaces.Discrete(4)
 
         self.render_mode = render_mode
-        
-    def new_env(self) -> None:
-        """
-        Reset the environment's structure by resampling
-        the state transition probabilities and/or reward function
-        from a prior distribution.
-
-        Returns:
-            None
-        """
-        self.target_x = np.random.uniform(-5, 5)
-        self.target_y = np.random.uniform(-5, 5)
-        self.game_over = False
-        self.prev_shaping = None
 
     def _destroy(self):
         if not self.moon:
@@ -479,11 +464,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
 
         if self.render_mode == "human":
             self.render()
-        # return self.step(np.array([0, 0]) if self.continuous else 0)[0]
-        # , {}
-        res = self.step(0)
-        print(f"start_{res[0]}_end")
-        return res[0]
+        return self.step(0)[0], {}
 
     def _create_particle(self, mass, x, y, ttl):
         p = self.world.CreateDynamicBody(
@@ -674,7 +655,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
 
         reward = 0
         shaping = (
-            -100 * np.sqrt((state[0] - self.target_x)**2 + (state[1]-self.target_y)**2)
+            -100 * np.sqrt((state[0] -self.target_x)**2 + (state[1]-self.target_y)**2)
             - 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])
             - 100 * abs(state[4])
             + 10 * state[6]
@@ -826,94 +807,3 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             pygame.display.quit()
             pygame.quit()
             self.isopen = False
-
-
-"""
-def heuristic(env, s):
-    
-    The heuristic for
-    1. Testing
-    2. Demonstration rollout.
-
-    Args:
-        env: The environment
-        s (list): The state. Attributes:
-            s[0] is the horizontal coordinate
-            s[1] is the vertical coordinate
-            s[2] is the horizontal speed
-            s[3] is the vertical speed
-            s[4] is the angle
-            s[5] is the angular speed
-            s[6] 1 if first leg has contact, else 0
-            s[7] 1 if second leg has contact, else 0
-
-    Returns:
-         a: The heuristic to be fed into the step function defined above to determine the next step and reward.
-    
-
-    angle_targ = s[0] * 0.5 + s[2] * 1.0  # angle should point towards center
-    if angle_targ > 0.4:
-        angle_targ = 0.4  # more than 0.4 radians (22 degrees) is bad
-    if angle_targ < -0.4:
-        angle_targ = -0.4
-    hover_targ = 0.55 * np.abs(
-        s[0]
-    )  # target y should be proportional to horizontal offset
-
-    angle_todo = (angle_targ - s[4]) * 0.5 - (s[5]) * 1.0
-    hover_todo = (hover_targ - s[1]) * 0.5 - (s[3]) * 0.5
-
-    if s[6] or s[7]:  # legs have contact
-        angle_todo = 0
-        hover_todo = (
-            -(s[3]) * 0.5
-        )  # override to reduce fall speed, that's all we need after contact
-
-    if env.unwrapped.continuous:
-        a = np.array([hover_todo * 20 - 1, -angle_todo * 20])
-        a = np.clip(a, -1, +1)
-    else:
-        a = 0
-        if hover_todo > np.abs(angle_todo) and hover_todo > 0.05:
-            a = 2
-        elif angle_todo < -0.05:
-            a = 3
-        elif angle_todo > +0.05:
-            a = 1
-    return a
-
-
-def demo_heuristic_lander(env, seed=None, render=False):
-    total_reward = 0
-    steps = 0
-    s, info = env.reset(seed=seed)
-    while True:
-        a = heuristic(env, s)
-        s, r, terminated, truncated, info = step_api_compatibility(env.step(a), True)
-        total_reward += r
-
-        if render:
-            still_open = env.render()
-            if still_open is False:
-                break
-
-        if steps % 20 == 0 or terminated or truncated:
-            print("observations:", " ".join([f"{x:+0.2f}" for x in s]))
-            print(f"step {steps} total_reward {total_reward:+0.2f}")
-        steps += 1
-        if terminated or truncated:
-            break
-    if render:
-        env.close()
-    return total_reward
-
-
-class LunarLanderContinuous:
-    def __init__(self):
-        raise error.Error(
-            "Error initializing LunarLanderContinuous Environment.\n"
-            "Currently, we do not support initializing this mode of environment by calling the class directly.\n"
-            "To use this environment, instead create it by specifying the continuous keyword in gym.make, i.e.\n"
-            'gym.make("LunarLander-v3", continuous=True)'
-        )
-"""

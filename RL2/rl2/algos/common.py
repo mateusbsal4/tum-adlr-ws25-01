@@ -9,7 +9,7 @@ import numpy as np
 from rl2.envs.abstract import MetaEpisodicEnv
 from rl2.agents.integration.policy_net import StatefulPolicyNet
 from rl2.agents.integration.value_net import StatefulValueNet
-from gymnasium.utils.step_api_compatibility import convert_to_done_step_api
+
 
 class MetaEpisode:
     def __init__(self, num_timesteps, dummy_obs):
@@ -49,7 +49,7 @@ def generate_meta_episode(
     env.new_env()
     meta_episode = MetaEpisode(
         num_timesteps=meta_episode_len,
-        dummy_obs=env.reset()[0])
+        dummy_obs=env.reset())
 
     o_t = np.array([env.reset()])
     a_tm1 = np.array([0])
@@ -60,14 +60,14 @@ def generate_meta_episode(
 
     for t in range(0, meta_episode_len):
         pi_dist_t, h_t_policy_net = policy_net(
-            curr_obs=tc.LongTensor(o_t),
+            curr_obs=tc.FloatTensor(o_t),
             prev_action=tc.LongTensor(a_tm1),
             prev_reward=tc.FloatTensor(r_tm1),
             prev_done=tc.FloatTensor(d_tm1),
             prev_state=h_tm1_policy_net)
 
         vpred_t, h_t_value_net = value_net(
-            curr_obs=tc.LongTensor(o_t),
+            curr_obs=tc.FloatTensor(o_t),
             prev_action=tc.LongTensor(a_tm1),
             prev_reward=tc.FloatTensor(r_tm1),
             prev_done=tc.FloatTensor(d_tm1),
@@ -76,13 +76,10 @@ def generate_meta_episode(
         a_t = pi_dist_t.sample()
         log_prob_a_t = pi_dist_t.log_prob(a_t)
 
-        # o_tp1, r_t, term_t, trunc_t, _ = env.step(
-        #     action=a_t.squeeze(0).detach().numpy(),
-        #     auto_reset=True)
-        # done_t = term_t or trunc_t
-        o_tp1, r_t, done_t, _ = convert_to_done_step_api(env.step(a_t.squeeze(0).detach().numpy()), True)
+
+        o_tp1, r_t, done_t, _ = env.step(a_t.squeeze(0).detach().numpy().item())
         
-        # meta_episode.obs[t] = o_t[0]
+
         meta_episode.obs[t] = o_t[0]
         meta_episode.acs[t] = a_t.squeeze(0).detach().numpy()
         meta_episode.rews[t] = r_t

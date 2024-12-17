@@ -177,17 +177,6 @@ def training_loop(
         None
     """
     meta_ep_returns = deque(maxlen=1000)
-    # logging
-    log_directory = 'checkpoints/logs/'
-    os.makedirs(log_directory, exist_ok=True)
-    log_filename = os.path.join(log_directory, 'training_log.txt')
-    logging.basicConfig(
-        filename=log_filename,  # Output file where logs will be saved
-        level=logging.INFO,           # Log level (INFO, DEBUG, etc.)
-        format='%(asctime)s - %(levelname)s - %(message)s',  # Log message format
-        filemode='a')                 # 'w' for writing (overwrites existing file), 'a' for appending
-    print('start logging')
-    logging.info("start logging")
     
     for pol_iter in range(pol_iters_so_far, max_pol_iters):
         # collect meta-episodes...

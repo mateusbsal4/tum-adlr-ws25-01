@@ -102,6 +102,8 @@ def maybe_load_checkpoint(
     """
     base_path = os.path.join(checkpoint_dir, model_name)
     try:
+        
+        #checkpoint --------
         if steps is None:
             steps = _latest_step(base_path)
 

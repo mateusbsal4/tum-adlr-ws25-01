@@ -4,7 +4,8 @@ Script for training stateful meta-reinforcement learning agents
 
 import argparse
 from functools import partial
-import logging, os
+import logging
+import os
 
 import torch as tc
 
@@ -173,6 +174,19 @@ def create_net(
 
 
 def main():
+    
+    # logging --------
+    log_directory = 'checkpoints/logs/'
+    os.makedirs(log_directory, exist_ok=True)
+    log_filename = os.path.join(log_directory, 'training_log.txt')
+    logging.basicConfig(
+        filename=log_filename,  # Output file where logs will be saved
+        level=logging.INFO,           # Log level (INFO, DEBUG, etc.)
+        format='%(asctime)s - %(levelname)s - %(message)s',  # Log message format
+        filemode='a')                 # 'w' for writing (overwrites existing file), 'a' for appending
+    print('start logging')
+    logging.info("start logging")
+    
     args = create_argparser().parse_args()
     comm = get_comm()
 
@@ -278,17 +292,7 @@ def main():
     else:
         meta_episodes_per_policy_update = args.meta_episodes_per_policy_update
 
-    # logging
-    log_directory = 'checkpoints/logs/'
-    os.makedirs(log_directory, exist_ok=True)
-    log_filename = os.path.join(log_directory, 'training_log.txt')
-    logging.basicConfig(
-        filename=log_filename,  # Output file where logs will be saved
-        level=logging.INFO,           # Log level (INFO, DEBUG, etc.)
-        format='%(asctime)s - %(levelname)s - %(message)s',  # Log message format
-        filemode='a')                 # 'w' for writing (overwrites existing file), 'a' for appending
-    print('start logging')
-    logging.info("start logging")
+    
     
     # training_loop(
     #     env=env,
@@ -315,4 +319,5 @@ def main():
 
 
 if __name__ == '__main__':
+
     main()

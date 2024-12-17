@@ -4,6 +4,7 @@ Script for training stateful meta-reinforcement learning agents
 
 import argparse
 from functools import partial
+import logging, os
 
 import torch as tc
 
@@ -42,7 +43,7 @@ def create_argparser():
     parser.add_argument("--max_episode_len", type=int, default=10_000,
                         help="Timesteps before automatic episode reset. " +
                              "Ignored if environment is bandit.")
-    parser.add_argument("--meta_episode_len", type=int, default=100,
+    parser.add_argument("--meta_episode_len", type=int, default=10,
                         help="Timesteps per meta-episode.")
 
     ### Architecture
@@ -277,28 +278,40 @@ def main():
     else:
         meta_episodes_per_policy_update = args.meta_episodes_per_policy_update
 
-    training_loop(
-        env=env,
-        policy_net=policy_net,
-        value_net=value_net,
-        policy_optimizer=policy_optimizer,
-        value_optimizer=value_optimizer,
-        policy_scheduler=policy_scheduler,
-        value_scheduler=value_scheduler,
-        meta_episodes_per_policy_update=meta_episodes_per_policy_update,
-        meta_episodes_per_learner_batch=args.meta_episodes_per_learner_batch,
-        meta_episode_len=args.meta_episode_len,
-        ppo_opt_epochs=args.ppo_opt_epochs,
-        ppo_clip_param=args.ppo_clip_param,
-        ppo_ent_coef=args.ppo_ent_coef,
-        discount_gamma=args.discount_gamma,
-        gae_lambda=args.gae_lambda,
-        standardize_advs=bool(args.standardize_advs),
-        max_pol_iters=args.max_pol_iters,
-        pol_iters_so_far=pol_iters_so_far,
-        policy_checkpoint_fn=policy_checkpoint_fn,
-        value_checkpoint_fn=value_checkpoint_fn,
-        comm=comm)
+    # logging
+    log_directory = 'checkpoints/logs/'
+    os.makedirs(log_directory, exist_ok=True)
+    log_filename = os.path.join(log_directory, 'training_log.txt')
+    logging.basicConfig(
+        filename=log_filename,  # Output file where logs will be saved
+        level=logging.INFO,           # Log level (INFO, DEBUG, etc.)
+        format='%(asctime)s - %(levelname)s - %(message)s',  # Log message format
+        filemode='a')                 # 'w' for writing (overwrites existing file), 'a' for appending
+    print('start logging')
+    logging.info("start logging")
+    
+    # training_loop(
+    #     env=env,
+    #     policy_net=policy_net,
+    #     value_net=value_net,
+    #     policy_optimizer=policy_optimizer,
+    #     value_optimizer=value_optimizer,
+    #     policy_scheduler=policy_scheduler,
+    #     value_scheduler=value_scheduler,
+    #     meta_episodes_per_policy_update=meta_episodes_per_policy_update,
+    #     meta_episodes_per_learner_batch=args.meta_episodes_per_learner_batch,
+    #     meta_episode_len=args.meta_episode_len,
+    #     ppo_opt_epochs=args.ppo_opt_epochs,
+    #     ppo_clip_param=args.ppo_clip_param,
+    #     ppo_ent_coef=args.ppo_ent_coef,
+    #     discount_gamma=args.discount_gamma,
+    #     gae_lambda=args.gae_lambda,
+    #     standardize_advs=bool(args.standardize_advs),
+    #     max_pol_iters=args.max_pol_iters,
+    #     pol_iters_so_far=pol_iters_so_far,
+    #     policy_checkpoint_fn=policy_checkpoint_fn,
+    #     value_checkpoint_fn=value_checkpoint_fn,
+    #     comm=comm)
 
 
 if __name__ == '__main__':

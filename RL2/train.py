@@ -294,28 +294,28 @@ def main():
 
     
     
-    # training_loop(
-    #     env=env,
-    #     policy_net=policy_net,
-    #     value_net=value_net,
-    #     policy_optimizer=policy_optimizer,
-    #     value_optimizer=value_optimizer,
-    #     policy_scheduler=policy_scheduler,
-    #     value_scheduler=value_scheduler,
-    #     meta_episodes_per_policy_update=meta_episodes_per_policy_update,
-    #     meta_episodes_per_learner_batch=args.meta_episodes_per_learner_batch,
-    #     meta_episode_len=args.meta_episode_len,
-    #     ppo_opt_epochs=args.ppo_opt_epochs,
-    #     ppo_clip_param=args.ppo_clip_param,
-    #     ppo_ent_coef=args.ppo_ent_coef,
-    #     discount_gamma=args.discount_gamma,
-    #     gae_lambda=args.gae_lambda,
-    #     standardize_advs=bool(args.standardize_advs),
-    #     max_pol_iters=args.max_pol_iters,
-    #     pol_iters_so_far=pol_iters_so_far,
-    #     policy_checkpoint_fn=policy_checkpoint_fn,
-    #     value_checkpoint_fn=value_checkpoint_fn,
-    #     comm=comm)
+    training_loop(
+        env=env,
+        policy_net=policy_net,
+        value_net=value_net,
+        policy_optimizer=policy_optimizer,
+        value_optimizer=value_optimizer,
+        policy_scheduler=policy_scheduler,
+        value_scheduler=value_scheduler,
+        meta_episodes_per_policy_update=meta_episodes_per_policy_update,
+        meta_episodes_per_learner_batch=args.meta_episodes_per_learner_batch,
+        meta_episode_len=args.meta_episode_len,
+        ppo_opt_epochs=args.ppo_opt_epochs,
+        ppo_clip_param=args.ppo_clip_param,
+        ppo_ent_coef=args.ppo_ent_coef,
+        discount_gamma=args.discount_gamma,
+        gae_lambda=args.gae_lambda,
+        standardize_advs=bool(args.standardize_advs),
+        max_pol_iters=args.max_pol_iters,
+        pol_iters_so_far=pol_iters_so_far,
+        policy_checkpoint_fn=policy_checkpoint_fn,
+        value_checkpoint_fn=value_checkpoint_fn,
+        comm=comm)
 
 
 if __name__ == '__main__':

@@ -51,7 +51,7 @@ def generate_meta_episode(
         num_timesteps=meta_episode_len,
         dummy_obs=env.reset()[0])
 
-    o_t[0] = np.array([env.reset()])
+    o_t = np.array([env.reset()])
     a_tm1 = np.array([0])
     r_tm1 = np.array([0.0])
     d_tm1 = np.array([1.0])
@@ -80,8 +80,9 @@ def generate_meta_episode(
         #     action=a_t.squeeze(0).detach().numpy(),
         #     auto_reset=True)
         # done_t = term_t or trunc_t
-        o_tp1, r_t, done_t, _ = convert_to_done_step_api(env.step(a_t), True)
+        o_tp1, r_t, done_t, _ = convert_to_done_step_api(env.step(a_t.squeeze(0).detach().numpy()), True)
         
+        # meta_episode.obs[t] = o_t[0]
         meta_episode.obs[t] = o_t[0]
         meta_episode.acs[t] = a_t.squeeze(0).detach().numpy()
         meta_episode.rews[t] = r_t

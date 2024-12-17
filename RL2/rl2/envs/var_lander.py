@@ -316,6 +316,20 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             self.action_space = spaces.Discrete(4)
 
         self.render_mode = render_mode
+        
+    def new_env(self) -> None:
+        """
+        Reset the environment's structure by resampling
+        the state transition probabilities and/or reward function
+        from a prior distribution.
+
+        Returns:
+            None
+        """
+        self.target_x = np.random.uniform(-5, 5)
+        self.target_y = np.random.uniform(-5, 5)
+        self.game_over = False
+        self.prev_shaping = None
 
     def _destroy(self):
         if not self.moon:
@@ -465,8 +479,11 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
 
         if self.render_mode == "human":
             self.render()
-        return self.step(np.array([0, 0]) if self.continuous else 0)[0]
-            #       , {}
+        # return self.step(np.array([0, 0]) if self.continuous else 0)[0]
+        # , {}
+        res = self.step(0)
+        print(f"start_{res[0]}_end")
+        return res[0]
 
     def _create_particle(self, mass, x, y, ttl):
         p = self.world.CreateDynamicBody(
@@ -811,8 +828,9 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             self.isopen = False
 
 
+"""
 def heuristic(env, s):
-    """
+    
     The heuristic for
     1. Testing
     2. Demonstration rollout.
@@ -831,7 +849,7 @@ def heuristic(env, s):
 
     Returns:
          a: The heuristic to be fed into the step function defined above to determine the next step and reward.
-    """
+    
 
     angle_targ = s[0] * 0.5 + s[2] * 1.0  # angle should point towards center
     if angle_targ > 0.4:
@@ -898,3 +916,4 @@ class LunarLanderContinuous:
             "To use this environment, instead create it by specifying the continuous keyword in gym.make, i.e.\n"
             'gym.make("LunarLander-v3", continuous=True)'
         )
+"""

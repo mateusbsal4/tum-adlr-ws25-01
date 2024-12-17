@@ -1,14 +1,8 @@
 """
 Implements preprocessing for the Lunar Lander.
 """
-
 import torch as tc
-
 from rl2.agents.preprocessing.common import one_hot, Preprocessing
-
-import torch as tc
-from rl2.agents.preprocessing.common import Preprocessing
-
 
 
 class LunarLanderPreprocessing(Preprocessing):
@@ -40,9 +34,10 @@ class LunarLanderPreprocessing(Preprocessing):
             tc.FloatTensor of shape [B, ..., 8 + A + 2]; concatenated state, action, reward, and done.
         """
         # Embedding action into one-hot vector for discrete action space
-        emb_a = tc.zeros(prev_action.shape[0], self._num_actions, device=prev_action.device)
-        emb_a.scatter_(1, prev_action.unsqueeze(-1), 1)
-
+        # emb_a = tc.zeros(prev_action.shape[0], self._num_actions, device=prev_action.device)
+        # emb_a.scatter_(1, prev_action.unsqueeze(-1), 1)
+        emb_a = one_hot(prev_action, depth=self._num_actions)
+        
         # Unsqueezing reward and done for concatenation
         prev_reward = prev_reward.unsqueeze(-1)
         prev_done = prev_done.unsqueeze(-1)

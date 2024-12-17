@@ -39,7 +39,7 @@ def create_argparser():
     parser.add_argument("--num_states", type=int, default=10,
                         help="Ignored if environment is bandit.")
     parser.add_argument("--num_actions", type=int, default=4)
-    parser.add_argument("--max_episode_len", type=int, default=100,
+    parser.add_argument("--max_episode_len", type=int, default=10_000,
                         help="Timesteps before automatic episode reset. " +
                              "Ignored if environment is bandit.")
     parser.add_argument("--meta_episode_len", type=int, default=100,

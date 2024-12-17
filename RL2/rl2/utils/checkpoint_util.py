@@ -3,6 +3,7 @@ Utility module for saving and loading checkpoints.
 """
 
 import os
+import logging
 
 import torch as tc
 
@@ -113,9 +114,13 @@ def maybe_load_checkpoint(
         if scheduler is not None:
             scheduler.load_state_dict(tc.load(sched_path))
 
+        logging.info(f"Loaded checkpoint from {base_path}, with step {steps}.")
+        logging.info("Continuing from checkpoint.")
         print(f"Loaded checkpoint from {base_path}, with step {steps}.")
         print("Continuing from checkpoint.")
     except FileNotFoundError:
+        logging.info(f"Bad checkpoint or none at {base_path} with step {steps}.")
+        logging.info("Running from scratch.")
         print(f"Bad checkpoint or none at {base_path} with step {steps}.")
         print("Running from scratch.")
         steps = 0

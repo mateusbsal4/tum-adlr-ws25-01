@@ -185,7 +185,7 @@ def training_loop(
         filename=log_filename,  # Output file where logs will be saved
         level=logging.INFO,           # Log level (INFO, DEBUG, etc.)
         format='%(asctime)s - %(levelname)s - %(message)s',  # Log message format
-        filemode='w')                 # 'w' for writing (overwrites existing file), 'a' for appending
+        filemode='a')                 # 'w' for writing (overwrites existing file), 'a' for appending
     print('start logging')
     logging.info("start logging")
     

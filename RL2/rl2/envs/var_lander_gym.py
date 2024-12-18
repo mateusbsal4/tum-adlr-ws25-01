@@ -2,7 +2,7 @@ import time
 import math
 from typing import TYPE_CHECKING, Optional
 
-from render_browser import render_browser
+# from render_browser import render_browser
 import numpy as np
 
 import gymnasium as gym

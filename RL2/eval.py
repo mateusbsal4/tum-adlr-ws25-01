@@ -9,7 +9,6 @@ import numpy as np
 
 from rl2.envs.abstract import MetaEpisodicEnv
 from rl2.agents.integration.policy_net import StatefulPolicyNet
-<<<<<<< Updated upstream
 
 import argparse
 from functools import partial
@@ -46,10 +45,6 @@ from rl2.utils.optim_util import get_weight_decay_param_groups
 
 
 #@render_browser
-=======
-
-
->>>>>>> Stashed changes
 @tc.no_grad()
 def evaluation_loop(
         env: MetaEpisodicEnv,
@@ -87,18 +82,13 @@ def evaluation_loop(
             prev_state=h_tm1_policy_net)
 
         a_t = pi_dist_t.sample()
-<<<<<<< Updated upstream
         env.env.render()
         #yield env.render()
-=======
-        #env.env.render()
->>>>>>> Stashed changes
         o_tp1, r_t, done_t, _ = env.step(a_t.squeeze(0).detach().numpy().item())
         o_t = np.array([o_tp1])
         a_tm1 = np.array([a_t.squeeze(0).detach().numpy()])
         r_tm1 = np.array([r_t])
         d_tm1 = np.array([float(done_t)])
-<<<<<<< HEAD
 
 def main():
     
@@ -173,19 +163,16 @@ def main():
     
     # load checkpoint, if applicable.
     base_path = "checkpoints/defaults/policy_net"
-    steps = 84
+    steps = 99
     model_path = os.path.join(base_path, f"model_{steps}.pth")
     policy_net.load_state_dict(tc.load(model_path, weights_only=True))
     
     evaluation_loop(
         env = env,
         policy_net = policy_net,
-        target_x = 5,
-        target_y = 5 
+        target_x = 0,
+        target_y = 0 
     )
 
 if __name__ == "__main__":
     main()
-=======
-        h_tm1_policy_net = h_t_policy_net
->>>>>>> 4955cdef6411d9d55959fa36d3c4b9c7c619aa07

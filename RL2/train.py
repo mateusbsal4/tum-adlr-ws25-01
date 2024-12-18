@@ -6,7 +6,7 @@ import argparse
 from functools import partial
 import logging
 import os
-from render_browser import render_browser
+# from render_browser import render_browser
 import torch as tc
 import numpy as np
 from rl2.envs.bandit_env import BanditEnv
@@ -41,10 +41,10 @@ def create_argparser():
     parser.add_argument("--num_states", type=int, default=10,
                         help="Ignored if environment is bandit.")
     parser.add_argument("--num_actions", type=int, default=4)
-    parser.add_argument("--max_episode_len", type=int, default=10,
+    parser.add_argument("--max_episode_len", type=int, default=1_000,
                         help="Timesteps before automatic episode reset. " +
                              "Ignored if environment is bandit.")
-    parser.add_argument("--meta_episode_len", type=int, default=10,
+    parser.add_argument("--meta_episode_len", type=int, default=1_000,
                         help="Timesteps per meta-episode.")
 
     ### Architecture
@@ -58,8 +58,8 @@ def create_argparser():
     parser.add_argument("--checkpoint_dir", type=str, default='checkpoints')
 
     ### Training
-    parser.add_argument("--max_pol_iters", type=int, default=1)
-    parser.add_argument("--meta_episodes_per_policy_update", type=int, default=10,
+    parser.add_argument("--max_pol_iters", type=int, default=100)
+    parser.add_argument("--meta_episodes_per_policy_update", type=int, default=-1,
                         help="If -1, quantity is determined using a formula")
     parser.add_argument("--meta_episodes_per_learner_batch", type=int, default=6)
     parser.add_argument("--ppo_opt_epochs", type=int, default=1)
@@ -173,7 +173,7 @@ def create_net(
     raise NotImplementedError
 
 
-@render_browser
+# @render_browser
 def main():
     
     # logging --------
@@ -317,49 +317,10 @@ def main():
         policy_checkpoint_fn=policy_checkpoint_fn,
         value_checkpoint_fn=value_checkpoint_fn,
         comm=comm)
-<<<<<<< Updated upstream
     
 
 
     logging.info("Training Ended!")
-=======
-    #evaluation_loop(
-    #    env = env,
-    #    policy_net = policy_net,
-    #    target_x = 1.5,
-    #    target_y = 1.5 
-    #)
-    target_x = 0
-    target_y = 0 
-    env.new_env_fixed_target(target_x, target_y)        
-
-    o_t = np.array([env.reset()])
-    a_tm1 = np.array([0])
-    r_tm1 = np.array([0.0])
-    d_tm1 = np.array([1.0])
-    h_tm1_policy_net = policy_net.initial_state(batch_size=1)
-    done_t = 0
-    while not done_t:
-        print("Eval")
-        pi_dist_t, h_t_policy_net = policy_net(
-            curr_obs=tc.FloatTensor(o_t),
-            prev_action=tc.LongTensor(a_tm1),
-            prev_reward=tc.FloatTensor(r_tm1),
-            prev_done=tc.FloatTensor(d_tm1),
-            prev_state=h_tm1_policy_net)
-
-        a_t = pi_dist_t.sample()
-        #env.render()
-        yield env.env.render()
-        o_tp1, r_t, done_t, _ = env.step(a_t.squeeze(0).detach().numpy().item())
-        o_t = np.array([o_tp1])
-        a_tm1 = np.array([a_t.squeeze(0).detach().numpy()])
-        r_tm1 = np.array([r_t])
-        d_tm1 = np.array([float(done_t)])
-        h_tm1_policy_net = h_t_policy_net    
-
-    logging.info("Eval Ended!")
->>>>>>> Stashed changes
 
 if __name__ == '__main__':
 

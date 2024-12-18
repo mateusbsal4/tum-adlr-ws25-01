@@ -3,8 +3,10 @@ Implements ppo loss computations for training
 stateful meta-reinforcement learning agents.
 """
 
+import os
 from typing import List, Dict, Optional, Callable
 from collections import deque
+import logging
 
 import torch as tc
 import numpy as np
@@ -175,7 +177,7 @@ def training_loop(
         None
     """
     meta_ep_returns = deque(maxlen=1000)
-
+    
     for pol_iter in range(pol_iters_so_far, max_pol_iters):
         # collect meta-episodes...
         meta_episodes = list()
@@ -220,6 +222,7 @@ def training_loop(
             if comm.Get_rank() == ROOT_RANK:
                 mean_adv_r0 = np.mean(
                     list(map(lambda m: m.advs, meta_episodes)))
+                logging.info(f"Mean advantage: {mean_adv_r0}")
                 print(f"Mean advantage: {mean_adv_r0}")
 
         # update policy...
@@ -257,12 +260,17 @@ def training_loop(
                 global_losses[name] = loss_avg
 
             if comm.Get_rank() == ROOT_RANK:
+                logging.info(f"pol update {pol_iter}, opt_epoch: {opt_epoch}...")
                 print(f"pol update {pol_iter}, opt_epoch: {opt_epoch}...")
                 for name, value in global_losses.items():
+                    logging.info(f"\t{name}: {value:>0.6f}")
                     print(f"\t{name}: {value:>0.6f}")
 
         # misc.: print metrics, save checkpoint.
         if comm.Get_rank() == ROOT_RANK:
+            logging.info("-" * 100)
+            logging.info(f"mean meta-episode return: {np.mean(meta_ep_returns):>0.3f}")
+            logging.info("-" * 100)
             print("-" * 100)
             print(f"mean meta-episode return: {np.mean(meta_ep_returns):>0.3f}")
             print("-" * 100)

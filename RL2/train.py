@@ -4,6 +4,8 @@ Script for training stateful meta-reinforcement learning agents
 
 import argparse
 from functools import partial
+import logging
+import os
 
 import torch as tc
 
@@ -39,10 +41,10 @@ def create_argparser():
     parser.add_argument("--num_states", type=int, default=10,
                         help="Ignored if environment is bandit.")
     parser.add_argument("--num_actions", type=int, default=4)
-    parser.add_argument("--max_episode_len", type=int, default=100,
+    parser.add_argument("--max_episode_len", type=int, default=10_000,
                         help="Timesteps before automatic episode reset. " +
                              "Ignored if environment is bandit.")
-    parser.add_argument("--meta_episode_len", type=int, default=100,
+    parser.add_argument("--meta_episode_len", type=int, default=10,
                         help="Timesteps per meta-episode.")
 
     ### Architecture
@@ -172,6 +174,19 @@ def create_net(
 
 
 def main():
+    
+    # logging --------
+    log_directory = 'checkpoints/logs/'
+    os.makedirs(log_directory, exist_ok=True)
+    log_filename = os.path.join(log_directory, 'training_log.txt')
+    logging.basicConfig(
+        filename=log_filename,  # Output file where logs will be saved
+        level=logging.INFO,           # Log level (INFO, DEBUG, etc.)
+        format='%(asctime)s - %(levelname)s - %(message)s',  # Log message format
+        filemode='a')                 # 'w' for writing (overwrites existing file), 'a' for appending
+    print('start logging')
+    logging.info("start logging")
+    
     args = create_argparser().parse_args()
     comm = get_comm()
 
@@ -277,6 +292,8 @@ def main():
     else:
         meta_episodes_per_policy_update = args.meta_episodes_per_policy_update
 
+    
+    
     training_loop(
         env=env,
         policy_net=policy_net,
@@ -302,4 +319,5 @@ def main():
 
 
 if __name__ == '__main__':
+
     main()

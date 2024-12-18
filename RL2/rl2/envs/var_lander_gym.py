@@ -351,22 +351,26 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
 
         # Create Terrain
         CHUNKS = 11
-        np.random.seed(42)  # Ensure reproducibility
-        fixed_heights = [3, 5, 4, 6, 4, 5, 4, 6, 4, 5, 3]  # Predefined terrain heights
-        max_fixed_height = max(fixed_heights)  # Find the maximum height in the predefined list
-        height = np.array(fixed_heights) * (H / (2 * max_fixed_height)) 
-
         chunk_x = [W / (CHUNKS - 1) * i for i in range(CHUNKS)]
+        #Define terrain heights
+        fixed_heights = [1, 1.5, 2, 2, 2.5, 2.0, 2.0, 2.0, 2.5, 1.0, 1.5]  
+        
+        # Convert to display ranges
+        height = np.array(fixed_heights) * (H / 10) + H/4 
+        self.helipad_y = (H/10)*self.target_y + H/4 
+        helipad_x = (W/5)*self.target_x + W/2
+        # Find the index of the closest element in chunk_x to helipad_x
+        target_chunk_idx = np.argmin(np.abs(np.array(chunk_x) - helipad_x))
+        # Set helipad coordinates based on target position
+        self.helipad_x1 = chunk_x[target_chunk_idx - 1]
+        self.helipad_x2 = chunk_x[target_chunk_idx + 1]
 
-        # Dynamic Helipad Positioning
-        helipad_index = np.argmin(np.abs(np.array(chunk_x) - self.target_x))  # Closest chunk to target_x
-        self.helipad_x1 = chunk_x[max(0, helipad_index - 1)]
-        self.helipad_x2 = chunk_x[min(CHUNKS - 1, helipad_index)]
-        self.helipad_y = self.target_y
-
-        # Ensure a flat region for the helipad
-        for i in range(max(0, helipad_index - 2), min(CHUNKS, helipad_index + 2)):
-            height[i] = self.target_y
+        # Flatten the area around the helipad
+        height[target_chunk_idx - 2] = self.helipad_y
+        height[target_chunk_idx - 1] = self.helipad_y
+        height[target_chunk_idx + 0] = self.helipad_y
+        height[target_chunk_idx + 1] = self.helipad_y
+        height[target_chunk_idx + 2] = self.helipad_y
 
         # Smooth the terrain
         smooth_y = [

@@ -21,7 +21,7 @@ class LunarLanderEnv(MetaEpisodicEnv):
     def __init__(self, max_episode_length = 100, target_x = 0.0, target_y = 0.0):
 
         register(
-            id="LunarLanderTargetPos",
+            id="LunarLanderTargetPos",  
             entry_point=LunarLanderTargetPos,
         )          #environment needs to be registered once
         self.target_x = target_x
@@ -42,16 +42,26 @@ class LunarLanderEnv(MetaEpisodicEnv):
         Returns:
             None
         """
-        self.target_x = np.random.uniform(-5, 5)
-        self.target_y = np.random.uniform(-5, 5)
+        self.target_x = np.random.uniform(-2.5, 2.5)        #Bounds of the LunarLander env
+        self.target_y = np.random.uniform(-2.5, 2.5)
         self.env = gym.make("LunarLanderTargetPos", render_mode="rgb_array", target_x=self.target_x, target_y = self.target_y)
         self.env = TimeLimit(self.env, max_episode_steps=self.max_ep_length)
+
+    def new_env_fixed_target(self, target_x, target_y) -> None:
+        """
+        Return a new LunarLander from the distribution over environments, by changing the target position.
+        Returns:
+            None
+        """
+        self.target_x = target_x
+        self.target_y = target_y
+        self.env = gym.make("LunarLanderTargetPos", render_mode="rgb_array", target_x=self.target_x, target_y = self.target_y)
 
     def reset(self) -> np.ndarray[np.float32]:
         """
         Reset the environment.
 
-        Returns:
+        Returns:    
             initial state.
         """
         state, _ = self.env.reset()

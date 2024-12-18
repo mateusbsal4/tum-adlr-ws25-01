@@ -24,6 +24,7 @@ from rl2.agents.heads.value_heads import LinearValueHead
 from rl2.agents.integration.policy_net import StatefulPolicyNet
 from rl2.agents.integration.value_net import StatefulValueNet
 from rl2.algos.ppo import training_loop
+from eval import evaluation_loop
 
 from rl2.utils.checkpoint_util import maybe_load_checkpoint, save_checkpoint
 from rl2.utils.comm_util import get_comm, sync_state
@@ -316,6 +317,13 @@ def main():
         policy_checkpoint_fn=policy_checkpoint_fn,
         value_checkpoint_fn=value_checkpoint_fn,
         comm=comm)
+    evaluation_loop(
+        env = env,
+        policy_net = policy_net,
+        target_x = 1.5,
+        target_y = 1.5 
+    )
+    
 
 
 if __name__ == '__main__':

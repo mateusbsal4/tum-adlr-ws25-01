@@ -353,7 +353,8 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         CHUNKS = 11
         np.random.seed(42)  # Ensure reproducibility
         fixed_heights = [3, 5, 4, 6, 4, 5, 4, 6, 4, 5, 3]  # Predefined terrain heights
-        height = np.array(fixed_heights) * (H / 10)  # Scale heights to match the environment
+        max_fixed_height = max(fixed_heights)  # Find the maximum height in the predefined list
+        height = np.array(fixed_heights) * (H / (2 * max_fixed_height)) 
 
         chunk_x = [W / (CHUNKS - 1) * i for i in range(CHUNKS)]
 

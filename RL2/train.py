@@ -42,10 +42,10 @@ def create_argparser():
     parser.add_argument("--num_states", type=int, default=10,
                         help="Ignored if environment is bandit.")
     parser.add_argument("--num_actions", type=int, default=4)
-    parser.add_argument("--max_episode_len", type=int, default=10_000,
+    parser.add_argument("--max_episode_len", type=int, default=1_000,
                         help="Timesteps before automatic episode reset. " +
                              "Ignored if environment is bandit.")
-    parser.add_argument("--meta_episode_len", type=int, default=10,
+    parser.add_argument("--meta_episode_len", type=int, default=1_000,
                         help="Timesteps per meta-episode.")
 
     ### Architecture
@@ -59,7 +59,7 @@ def create_argparser():
     parser.add_argument("--checkpoint_dir", type=str, default='checkpoints')
 
     ### Training
-    parser.add_argument("--max_pol_iters", type=int, default=12000)
+    parser.add_argument("--max_pol_iters", type=int, default=100)
     parser.add_argument("--meta_episodes_per_policy_update", type=int, default=-1,
                         help="If -1, quantity is determined using a formula")
     parser.add_argument("--meta_episodes_per_learner_batch", type=int, default=60)
@@ -287,7 +287,7 @@ def main():
 
     # run it!
     if args.meta_episodes_per_policy_update == -1:
-        numer = 240000
+        numer = 50_000
         denom = comm.Get_size() * args.meta_episode_len
         meta_episodes_per_policy_update = numer // denom
     else:
@@ -325,6 +325,7 @@ def main():
     )
     
 
+    logging.info("Training Ended!")
 
 if __name__ == '__main__':
 

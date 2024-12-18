@@ -27,7 +27,7 @@ class LunarLanderEnv(MetaEpisodicEnv):
         self.target_x = target_x
         self.target_y = target_y
         self.max_ep_length = max_episode_length
-        self.env = gym.make("LunarLanderTargetPos", render_mode="rgb_array", target_x=self.target_x, target_y = self.target_y)
+        self.env = gym.make("LunarLanderTargetPos", render_mode="human", target_x=self.target_x, target_y = self.target_y)
         self.env = TimeLimit(self.env, self.max_ep_length)      #Wrapper which sets truncated flag to True when maximum episode length is exceeded
 
     def max_episode_len(self) -> int:
@@ -42,13 +42,9 @@ class LunarLanderEnv(MetaEpisodicEnv):
         Returns:
             None
         """
-<<<<<<< HEAD
         self.target_x = np.random.uniform(-2.5, 2.5)        #Bounds of the LunarLander env
-=======
-        self.target_x = np.random.uniform(-2.5, 2.5)
->>>>>>> 18d48a441c9a1a6c10882ac64ee93fc6ad5daf5d
         self.target_y = np.random.uniform(-2.5, 2.5)
-        self.env = gym.make("LunarLanderTargetPos", render_mode="rgb_array", target_x=self.target_x, target_y = self.target_y)
+        self.env = gym.make("LunarLanderTargetPos", render_mode="human", target_x=self.target_x, target_y = self.target_y)
         self.env = TimeLimit(self.env, max_episode_steps=self.max_ep_length)
 
     def new_env_fixed_target(self, target_x, target_y) -> None:
@@ -59,7 +55,7 @@ class LunarLanderEnv(MetaEpisodicEnv):
         """
         self.target_x = target_x
         self.target_y = target_y
-        self.env = gym.make("LunarLanderTargetPos", render_mode="rgb_array", target_x=self.target_x, target_y = self.target_y)
+        self.env = gym.make("LunarLanderTargetPos", render_mode="human", target_x=self.target_x, target_y = self.target_y)
 
     def reset(self) -> np.ndarray[np.float32]:
         """

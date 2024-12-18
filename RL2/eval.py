@@ -32,7 +32,7 @@ def evaluation_loop(
         None
     """
 
-    env.new_env_fixed_target(target_x, target_y)        #create 
+    env.new_env_fixed_target(target_x, target_y)        #create new env with fixed landing position
 
     o_t = np.array([env.reset()])
     a_tm1 = np.array([0])
@@ -49,7 +49,7 @@ def evaluation_loop(
             prev_state=h_tm1_policy_net)
 
         a_t = pi_dist_t.sample()
-        env.render()
+        env.env.render()
         #yield env.render()
         o_tp1, r_t, done_t, _ = env.step(a_t.squeeze(0).detach().numpy().item())
         o_t = np.array([o_tp1])

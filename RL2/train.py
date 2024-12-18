@@ -317,12 +317,7 @@ def main():
         value_checkpoint_fn=value_checkpoint_fn,
         comm=comm)
     
-    # evaluation_loop(
-    #     env = env,
-    #     policy_net = policy_net,
-    #     target_x = 1.5,
-    #     target_y = 1.5 
-    # )
+
     
 
     logging.info("Training Ended!")

@@ -467,8 +467,8 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
 
         self.drawlist = [self.lander] + self.legs
 
-        if self.render_mode == "human":
-            self.render()
+        # if self.render_mode == "human":
+        #     self.render()
         return self.step(0)[0], {}
 
     def _create_particle(self, mass, x, y, ttl):
@@ -684,8 +684,8 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             terminated = True
             reward = +100
 
-        if self.render_mode == "human":
-            self.render()
+        # if self.render_mode == "human":
+        #     self.render()
         # truncation=False as the time limit is handled by the `TimeLimit` wrapper added during `make`
         return np.array(state, dtype=np.float32), reward, terminated, False, {}
 

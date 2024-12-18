@@ -62,7 +62,8 @@ def create_argparser():
     parser.add_argument("--meta_episodes_per_policy_update", type=int, default=-1,
                         help="If -1, quantity is determined using a formula")
     parser.add_argument("--meta_episodes_per_learner_batch", type=int, default=6)
-    parser.add_argument("--ppo_opt_epochs", type=int, default=1)
+    parser.add_argument("--ppo_opt_epochs", type=int, default=8)
+    
     parser.add_argument("--ppo_clip_param", type=float, default=0.10)
     parser.add_argument("--ppo_ent_coef", type=float, default=0.01)
     parser.add_argument("--discount_gamma", type=float, default=0.99)
@@ -293,7 +294,6 @@ def main():
     else:
         meta_episodes_per_policy_update = args.meta_episodes_per_policy_update
 
-    print()
     
     training_loop(
         env=env,

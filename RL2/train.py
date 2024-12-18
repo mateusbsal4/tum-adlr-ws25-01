@@ -6,9 +6,9 @@ import argparse
 from functools import partial
 import logging
 import os
-
+from render_browser import render_browser
 import torch as tc
-
+import numpy as np
 from rl2.envs.bandit_env import BanditEnv
 from rl2.envs.mdp_env import MDPEnv
 from rl2.envs.lunar_lander_env import LunarLanderEnv
@@ -41,10 +41,10 @@ def create_argparser():
     parser.add_argument("--num_states", type=int, default=10,
                         help="Ignored if environment is bandit.")
     parser.add_argument("--num_actions", type=int, default=4)
-    parser.add_argument("--max_episode_len", type=int, default=1_000,
+    parser.add_argument("--max_episode_len", type=int, default=10,
                         help="Timesteps before automatic episode reset. " +
                              "Ignored if environment is bandit.")
-    parser.add_argument("--meta_episode_len", type=int, default=1_000,
+    parser.add_argument("--meta_episode_len", type=int, default=10,
                         help="Timesteps per meta-episode.")
 
     ### Architecture
@@ -58,11 +58,11 @@ def create_argparser():
     parser.add_argument("--checkpoint_dir", type=str, default='checkpoints')
 
     ### Training
-    parser.add_argument("--max_pol_iters", type=int, default=100)
-    parser.add_argument("--meta_episodes_per_policy_update", type=int, default=-1,
+    parser.add_argument("--max_pol_iters", type=int, default=1)
+    parser.add_argument("--meta_episodes_per_policy_update", type=int, default=10,
                         help="If -1, quantity is determined using a formula")
-    parser.add_argument("--meta_episodes_per_learner_batch", type=int, default=60)
-    parser.add_argument("--ppo_opt_epochs", type=int, default=8)
+    parser.add_argument("--meta_episodes_per_learner_batch", type=int, default=6)
+    parser.add_argument("--ppo_opt_epochs", type=int, default=1)
     parser.add_argument("--ppo_clip_param", type=float, default=0.10)
     parser.add_argument("--ppo_ent_coef", type=float, default=0.01)
     parser.add_argument("--discount_gamma", type=float, default=0.99)
@@ -173,6 +173,7 @@ def create_net(
     raise NotImplementedError
 
 
+@render_browser
 def main():
     
     # logging --------
@@ -292,7 +293,7 @@ def main():
     else:
         meta_episodes_per_policy_update = args.meta_episodes_per_policy_update
 
-    
+    print()
     
     training_loop(
         env=env,
@@ -318,7 +319,6 @@ def main():
         comm=comm)
     
 
-    
 
     logging.info("Training Ended!")
 

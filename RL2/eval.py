@@ -9,6 +9,7 @@ import numpy as np
 
 from rl2.envs.abstract import MetaEpisodicEnv
 from rl2.agents.integration.policy_net import StatefulPolicyNet
+<<<<<<< Updated upstream
 
 import argparse
 from functools import partial
@@ -45,6 +46,10 @@ from rl2.utils.optim_util import get_weight_decay_param_groups
 
 
 #@render_browser
+=======
+
+
+>>>>>>> Stashed changes
 @tc.no_grad()
 def evaluation_loop(
         env: MetaEpisodicEnv,
@@ -82,8 +87,12 @@ def evaluation_loop(
             prev_state=h_tm1_policy_net)
 
         a_t = pi_dist_t.sample()
+<<<<<<< Updated upstream
         env.env.render()
         #yield env.render()
+=======
+        #env.env.render()
+>>>>>>> Stashed changes
         o_tp1, r_t, done_t, _ = env.step(a_t.squeeze(0).detach().numpy().item())
         o_t = np.array([o_tp1])
         a_tm1 = np.array([a_t.squeeze(0).detach().numpy()])

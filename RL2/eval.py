@@ -65,7 +65,7 @@ def evaluation_loop(
         None
     """
 
-    env.new_env_fixed_target(target_x, target_y)        #create 
+    env.new_env_fixed_target(target_x, target_y)        #create new env with fixed landing position
 
     o_t = np.array([env.reset()])
     a_tm1 = np.array([0])
@@ -89,6 +89,7 @@ def evaluation_loop(
         a_tm1 = np.array([a_t.squeeze(0).detach().numpy()])
         r_tm1 = np.array([r_t])
         d_tm1 = np.array([float(done_t)])
+<<<<<<< HEAD
 
 def main():
     
@@ -176,3 +177,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+=======
+        h_tm1_policy_net = h_t_policy_net
+>>>>>>> 4955cdef6411d9d55959fa36d3c4b9c7c619aa07

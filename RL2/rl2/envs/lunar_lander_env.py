@@ -18,7 +18,7 @@ class LunarLanderEnv(MetaEpisodicEnv):
     """
 
     """
-    def __init__(self, max_episode_length = 100, target_x = 0.0, target_y = 0.0):
+    def __init__(self, max_episode_length = 10_000, target_x = 0.0, target_y = 0.0):
 
         register(
             id="LunarLanderTargetPos",
@@ -42,8 +42,8 @@ class LunarLanderEnv(MetaEpisodicEnv):
         Returns:
             None
         """
-        self.target_x = np.random.uniform(-5, 5)
-        self.target_y = np.random.uniform(-5, 5)
+        self.target_x = np.random.uniform(-2.5, 2.5)
+        self.target_y = np.random.uniform(-2.5, 2.5)
         self.env = gym.make("LunarLanderTargetPos", render_mode="rgb_array", target_x=self.target_x, target_y = self.target_y)
         self.env = TimeLimit(self.env, max_episode_steps=self.max_ep_length)
 

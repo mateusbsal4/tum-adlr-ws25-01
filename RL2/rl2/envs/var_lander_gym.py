@@ -351,27 +351,17 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
 
         # Create Terrain
         CHUNKS = 11
+        height = self.np_random.uniform(0, H/2, size=(CHUNKS + 1,))
         chunk_x = [W / (CHUNKS - 1) * i for i in range(CHUNKS)]
-        #Define terrain heights
-        fixed_heights = [1, 1.5, 2, 2, 2.5, 2.0, 2.0, 2.0, 2.5, 1.0, 1.5]  
-        
-        # Convert to display ranges
-        height = np.array(fixed_heights) * (H / 10) + H/4 
-        self.helipad_y = (H/10)*self.target_y + H/4 
-        helipad_x = (W/5)*self.target_x + W/2
-        # Find the index of the closest element in chunk_x to helipad_x
-        target_chunk_idx = np.argmin(np.abs(np.array(chunk_x) - helipad_x))
-        # Set helipad coordinates based on target position
-        self.helipad_x1 = chunk_x[target_chunk_idx - 1]
-        self.helipad_x2 = chunk_x[target_chunk_idx + 1]
-
-        # Flatten the area around the helipad
-        height[target_chunk_idx - 2] = self.helipad_y
-        height[target_chunk_idx - 1] = self.helipad_y
-        height[target_chunk_idx + 0] = self.helipad_y
-        height[target_chunk_idx + 1] = self.helipad_y
-        height[target_chunk_idx + 2] = self.helipad_y
-
+        closest_chunk_index = np.argmin(np.abs(np.array(chunk_x) - W*self.target_x))
+        self.helipad_x1 = chunk_x[closest_chunk_index - 1]
+        self.helipad_x2 = chunk_x[closest_chunk_index + 1]
+        self.helipad_y = H*self.target_y
+        height[closest_chunk_index - 2] = self.helipad_y
+        height[closest_chunk_index - 1] = self.helipad_y
+        height[closest_chunk_index + 0] = self.helipad_y
+        height[closest_chunk_index + 1] = self.helipad_y
+        height[closest_chunk_index + 2] = self.helipad_y
         # Smooth the terrain
         smooth_y = [
             0.33 * (height[i - 1] + height[i + 0] + height[i + 1]) if 0 < i < CHUNKS - 1 else height[i]
@@ -467,9 +457,9 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
 
         self.drawlist = [self.lander] + self.legs
 
-        # if self.render_mode == "human":
-        #     self.render()
-        return self.step(0)[0], {}
+        if self.render_mode == "human":
+            self.render()
+        return self.step(np.array([0, 0]) if self.continuous else 0)[0], {}
 
     def _create_particle(self, mass, x, y, ttl):
         p = self.world.CreateDynamicBody(
@@ -645,10 +635,12 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
 
         pos = self.lander.position
         vel = self.lander.linearVelocity
-
+        W = VIEWPORT_W / SCALE
+        H = VIEWPORT_H / SCALE
+        self.helipad_y = H*self.target_y 
         state = [
-            (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2),
-            (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2),
+            (pos.x - W*self.target_x) / (W / 2),
+            (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (H/ 2),
             vel.x * (VIEWPORT_W / SCALE / 2) / FPS,
             vel.y * (VIEWPORT_H / SCALE / 2) / FPS,
             self.lander.angle,
@@ -660,7 +652,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
 
         reward = 0
         shaping = (
-            -100 * np.sqrt((state[0] -self.target_x)**2 + (state[1]-self.target_y)**2)
+             -100 * np.sqrt(state[0] * state[0] + state[1] * state[1])
             - 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])
             - 100 * abs(state[4])
             + 10 * state[6]
@@ -677,15 +669,15 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         reward -= s_power * 0.03
 
         terminated = False
-        if self.game_over or abs(state[0]) >= 1.0:
+        if self.game_over or pos.x >W or pos.x<0 or pos.y<0 or pos.y>H:
             terminated = True
             reward = -100
         if not self.lander.awake:
             terminated = True
             reward = +100
 
-        # if self.render_mode == "human":
-        #     self.render()
+        if self.render_mode == "human":
+            self.render()
         # truncation=False as the time limit is handled by the `TimeLimit` wrapper added during `make`
         return np.array(state, dtype=np.float32), reward, terminated, False, {}
 
@@ -812,3 +804,4 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             pygame.display.quit()
             pygame.quit()
             self.isopen = False
+

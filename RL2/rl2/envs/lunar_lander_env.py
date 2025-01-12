@@ -13,12 +13,16 @@ from .var_lander_gym import LunarLanderTargetPos, register
 
 from rl2.envs.abstract import MetaEpisodicEnv
 
-
+VIEWPORT_W = 600
+VIEWPORT_H = 400
+SCALE = 30.0
+W = VIEWPORT_W / SCALE
+H = VIEWPORT_H / SCALE
 class LunarLanderEnv(MetaEpisodicEnv):
     """
 
     """
-    def __init__(self, max_episode_length = 10_000, target_x = 0.0, target_y = 0.0):
+    def __init__(self, max_episode_length = 10_000, target_x = 0.5, target_y = 0.25):
 
         register(
             id="LunarLanderTargetPos",  
@@ -27,7 +31,7 @@ class LunarLanderEnv(MetaEpisodicEnv):
         self.target_x = target_x
         self.target_y = target_y
         self.max_ep_length = max_episode_length
-        self.env = gym.make("LunarLanderTargetPos", render_mode="human", target_x=self.target_x, target_y = self.target_y)
+        self.env = gym.make("LunarLanderTargetPos", render_mode="rgb_array", target_x=self.target_x, target_y = self.target_y)
         self.env = TimeLimit(self.env, self.max_ep_length)      #Wrapper which sets truncated flag to True when maximum episode length is exceeded
 
     def max_episode_len(self) -> int:
@@ -44,9 +48,9 @@ class LunarLanderEnv(MetaEpisodicEnv):
         """
         # self.target_x = 0
         # self.target_y = 0
-        self.target_x = np.random.uniform(-1.5, 1.5)        #Bounds of the LunarLander env
-        self.target_y = np.random.uniform(-1.5, 1.5)
-        self.env = gym.make("LunarLanderTargetPos", render_mode="human", target_x=self.target_x, target_y = self.target_y)
+        self.target_x = np.random.uniform(0.2, 0.7)        #Bounds of the LunarLander env
+        self.target_y = np.random.uniform(0.2, 0.7)
+        self.env = gym.make("LunarLanderTargetPos", render_mode="rgb_array", target_x=self.target_x, target_y = self.target_y)
         self.env = TimeLimit(self.env, max_episode_steps=self.max_ep_length)
 
     def new_env_fixed_target(self, target_x, target_y) -> None:
@@ -57,9 +61,10 @@ class LunarLanderEnv(MetaEpisodicEnv):
         """
         self.target_x = target_x
         self.target_y = target_y
-        self.env = gym.make("LunarLanderTargetPos", render_mode="human", target_x=self.target_x, target_y = self.target_y)
+        self.env = gym.make("LunarLanderTargetPos", render_mode="rgb_array", target_x=self.target_x, target_y = self.target_y)
 
     def reset(self) -> np.ndarray[np.float32]:
+
         """
         Reset the environment.
 

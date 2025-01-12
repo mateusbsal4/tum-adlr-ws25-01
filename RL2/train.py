@@ -6,7 +6,7 @@ import argparse
 from functools import partial
 import logging
 import os
-# from render_browser import render_browser
+#from render_browser import render_browser
 import torch as tc
 import numpy as np
 from rl2.envs.bandit_env import BanditEnv
@@ -44,7 +44,7 @@ def create_argparser():
     parser.add_argument("--max_episode_len", type=int, default=1_000,
                         help="Timesteps before automatic episode reset. " +
                              "Ignored if environment is bandit.")
-    parser.add_argument("--meta_episode_len", type=int, default=1_000,
+    parser.add_argument("--meta_episode_len", type=int, default=250,
                         help="Timesteps per meta-episode.")
 
     ### Architecture
@@ -58,11 +58,11 @@ def create_argparser():
     parser.add_argument("--checkpoint_dir", type=str, default='checkpoints')
 
     ### Training
-    parser.add_argument("--max_pol_iters", type=int, default=100)
+    parser.add_argument("--max_pol_iters", type=int, default=80)
     parser.add_argument("--meta_episodes_per_policy_update", type=int, default=-1,
                         help="If -1, quantity is determined using a formula")
     parser.add_argument("--meta_episodes_per_learner_batch", type=int, default=6)
-    parser.add_argument("--ppo_opt_epochs", type=int, default=8)
+    parser.add_argument("--ppo_opt_epochs", type=int, default=20)
     
     parser.add_argument("--ppo_clip_param", type=float, default=0.10)
     parser.add_argument("--ppo_ent_coef", type=float, default=0.01)
@@ -288,7 +288,7 @@ def main():
 
     # run it!
     if args.meta_episodes_per_policy_update == -1:
-        numer = 50_000
+        numer = 5000
         denom = comm.Get_size() * args.meta_episode_len
         meta_episodes_per_policy_update = numer // denom
     else:

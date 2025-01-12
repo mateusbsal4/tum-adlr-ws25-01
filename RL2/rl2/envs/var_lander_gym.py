@@ -2,7 +2,7 @@ import time
 import math
 from typing import TYPE_CHECKING, Optional
 
-# from render_browser import render_browser
+from render_browser import render_browser
 import numpy as np
 
 import gymnasium as gym
@@ -354,8 +354,8 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         height = self.np_random.uniform(0, H/2, size=(CHUNKS + 1,))
         chunk_x = [W / (CHUNKS - 1) * i for i in range(CHUNKS)]
         closest_chunk_index = np.argmin(np.abs(np.array(chunk_x) - W*self.target_x))
-        self.helipad_x1 = chunk_x[closest_chunk_index - 1]
-        self.helipad_x2 = chunk_x[closest_chunk_index + 1]
+        self.helipad_x1 = chunk_x[closest_chunk_index]
+        self.helipad_x2 = chunk_x[closest_chunk_index]
         self.helipad_y = H*self.target_y
         height[closest_chunk_index - 2] = self.helipad_y
         height[closest_chunk_index - 1] = self.helipad_y

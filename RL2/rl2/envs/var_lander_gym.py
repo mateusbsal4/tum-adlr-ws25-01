@@ -420,13 +420,12 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         # helipad_y and helipad_x define where the lander should actually land:
         # The user can customize target_x, target_y, which modifies the final pad location.
         self.helipad_y = (H / 10) * self.target_y + H / 4
-        helipad_x = (W / 5) * self.target_x + W / 2
+        self.helipad_x = (W / 5) * self.target_x + W / 2
 
         # ---------------------------------------------------------------------------------------
         # Find the chunk index closest to helipad_x so we can flatten the terrain around that chunk.
-        target_chunk_idx = np.argmin(np.abs(np.array(chunk_x) - helipad_x))
-        print(target_chunk_idx)
-        #!FIX: TREAT EDGE CASES = TARGET CHUNK IS FIRST/LAST IN THE LIST
+        target_chunk_idx = np.argmin(np.abs(np.array(chunk_x) - self.helipad_x))
+        #FIXED: TREAT EDGE CASES = TARGET CHUNK IS FIRST/LAST IN THE LIST
         if target_chunk_idx == CHUNKS-1:
             target_chunk_idx -= 2       # -2 because later we add 2 
         elif target_chunk_idx == 0:
@@ -765,7 +764,10 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         # Extract lander position/velocity for the agent's observation.
         pos = self.lander.position
         vel = self.lander.linearVelocity
-
+        
+        W = VIEWPORT_W / SCALE
+        H = VIEWPORT_H / SCALE
+        
         # Build an 8D state vector:
         #  0) horizontal coordinate (normalized)
         #  1) vertical coordinate (normalized)
@@ -775,8 +777,9 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         #  5) angular velocity (scaled)
         #  6) left leg contact (0 or 1)
         #  7) right leg contact (0 or 1)
+        
         state = [
-            (pos.x - W*self.target_x) / (W / 2),
+            (pos.x - self.helipad_x) / (W / 2),
             (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (H/ 2),
             vel.x * (VIEWPORT_W / SCALE / 2) / FPS,
             vel.y * (VIEWPORT_H / SCALE / 2) / FPS,

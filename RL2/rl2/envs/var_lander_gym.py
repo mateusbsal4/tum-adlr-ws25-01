@@ -2,7 +2,7 @@ import time
 import math
 from typing import TYPE_CHECKING, Optional
 
-# from render_browser import render_browser
+from render_browser import render_browser
 import numpy as np
 
 import gymnasium as gym
@@ -573,7 +573,11 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
 
         # The environment typically returns an observation and any extra info. 
         # Here, we call step(0) to get the initial observation.
-        return self.step(0)[0], {}
+        # return self.step(0)[0], {}
+    
+        if self.render_mode == "human":
+            self.render()
+        return self.step(np.array([0, 0]) if self.continuous else 0)[0], {}
 
 
     def _create_particle(self, mass, x, y, ttl):
@@ -772,8 +776,8 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         #  6) left leg contact (0 or 1)
         #  7) right leg contact (0 or 1)
         state = [
-            (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2),
-            (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2),
+            (pos.x - W*self.target_x) / (W / 2),
+            (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (H/ 2),
             vel.x * (VIEWPORT_W / SCALE / 2) / FPS,
             vel.y * (VIEWPORT_H / SCALE / 2) / FPS,
             self.lander.angle,
@@ -792,8 +796,10 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         #  4) leg contacts
         # The agent is encouraged to reduce distance, velocity, angle, and to keep both legs on ground.
         shaping = (
-            -100 * np.sqrt((state[0] - self.target_x)**2 + (state[1] - self.target_y)**2)
-            - 100 * np.sqrt(state[2]**2 + state[3]**2)
+            # -100 * np.sqrt((state[0] - self.target_x)**2 + (state[1] - self.target_y)**2)
+            # - 100 * np.sqrt(state[2]**2 + state[3]**2)
+             -100 * np.sqrt(state[0] * state[0] + state[1] * state[1])
+            - 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])
             - 100 * abs(state[4])
             + 10 * state[6]
             + 10 * state[7]
@@ -812,9 +818,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         # ---------------------------------------------------------------------------------------
         # EPISODE TERMINATION CONDITIONS
         terminated = False
-
-        # If the lander goes off-screen horizontally or if self.game_over flag is set => fail
-        if self.game_over or abs(state[0]) >= 1.0:
+        if self.game_over or pos.x >W or pos.x<0 or pos.y<0 or pos.y>H:
             terminated = True
             reward = -100
 
@@ -824,6 +828,9 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             reward = +100
 
         # NOTE: Gymnasium's TimeLimit wrapper handles max episode steps => 'False' for truncation here.
+        if self.render_mode == "human":
+            self.render()
+        # truncation=False as the time limit is handled by the `TimeLimit` wrapper added during `make`
         return np.array(state, dtype=np.float32), reward, terminated, False, {}
 
 
@@ -999,3 +1006,4 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             pygame.display.quit()
             pygame.quit()
             self.isopen = False
+

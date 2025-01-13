@@ -15,8 +15,6 @@ from functools import partial
 import logging
 import os
 
-import torch as tc
-
 from train import create_env, create_argparser, create_net, create_preprocessing
 
 from rl2.envs.bandit_env import BanditEnv
@@ -39,18 +37,18 @@ from rl2.utils.checkpoint_util import maybe_load_checkpoint, save_checkpoint
 from rl2.utils.comm_util import get_comm, sync_state
 from rl2.utils.constants import ROOT_RANK
 from rl2.utils.optim_util import get_weight_decay_param_groups
-#from render_browser import render_browser
+from render_browser import render_browser
 
 
 
 
-#@render_browser
+@render_browser
 @tc.no_grad()
 def evaluation_loop(
         env: MetaEpisodicEnv,
         policy_net: StatefulPolicyNet,
-        target_x: float,    #must be within [-2.5, 2.5]!
-        target_y: float     #must be within [-2.5, 2.5]!
+        target_x: float,    #must be within [0, 1]!
+        target_y: float     #must be within [0, 1]!
     ) -> None:
     """
     Evaluates a trained RL2 agent on a new Lunar Lander environment with predefined landing position
@@ -82,8 +80,8 @@ def evaluation_loop(
             prev_state=h_tm1_policy_net)
 
         a_t = pi_dist_t.sample()
-        env.env.render()
-        #yield env.render()
+        #env.env.render()
+        yield env.env.render()
         o_tp1, r_t, done_t, _ = env.step(a_t.squeeze(0).detach().numpy().item())
         o_t = np.array([o_tp1])
         a_tm1 = np.array([a_t.squeeze(0).detach().numpy()])

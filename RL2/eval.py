@@ -121,7 +121,7 @@ def main():
         d_tm1 = np.array([1.0])
         h_tm1_policy_net = policy_net.initial_state(batch_size=1)
         done_t = 0
-        while not done_t:
+        while True:
             pi_dist_t, h_t_policy_net = policy_net(
                 curr_obs=tc.FloatTensor(o_t),
                 prev_action=tc.LongTensor(a_tm1),
@@ -163,15 +163,15 @@ def main():
     
     # load checkpoint, if applicable.
     base_path = "checkpoints/defaults/policy_net"
-    steps = 99
+    steps = 84
     model_path = os.path.join(base_path, f"model_{steps}.pth")
     policy_net.load_state_dict(tc.load(model_path, weights_only=True))
     
     evaluation_loop(
         env = env,
         policy_net = policy_net,
-        target_x = 0,
-        target_y = 0 
+        target_x = 5,
+        target_y = 1
     )
 
 if __name__ == "__main__":

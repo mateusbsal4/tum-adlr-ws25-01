@@ -40,8 +40,8 @@ def create_argparser():
                         default='lander')
     parser.add_argument("--num_states", type=int, default=10,
                         help="Ignored if environment is bandit.")
-    parser.add_argument("--num_actions", type=int, default=4)
-    parser.add_argument("--max_episode_len", type=int, default=1_000,
+    parser.add_argument("--num_actions", type=int, default=4) 
+    parser.add_argument("--max_episode_len", type=int, default=1_000,  # apparently completely irrelevant (not used anywhere)
                         help="Timesteps before automatic episode reset. " +
                              "Ignored if environment is bandit.")
     parser.add_argument("--meta_episode_len", type=int, default=250,
@@ -288,7 +288,7 @@ def main():
 
     # run it!
     if args.meta_episodes_per_policy_update == -1:
-        numer = 5000
+        numer = 5000 # timesteps per policy update
         denom = comm.Get_size() * args.meta_episode_len
         meta_episodes_per_policy_update = numer // denom
     else:

@@ -427,9 +427,13 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         target_chunk_idx = np.argmin(np.abs(np.array(chunk_x) - self.helipad_x))
         #FIXED: TREAT EDGE CASES = TARGET CHUNK IS FIRST/LAST IN THE LIST
         if target_chunk_idx == CHUNKS-1:
-            target_chunk_idx -= 2       # -2 because later we add 2 
+            target_chunk_idx -= 2       # -3 because later we add 2 
+        elif target_chunk_idx == CHUNKS-2:
+            target_chunk_idx -= 1       # -2 because later we add 2 
         elif target_chunk_idx == 0:
             target_chunk_idx += 2
+        
+
             
 
         # We'll define two corners of the helipad around that target chunk index (left & right edges).

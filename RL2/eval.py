@@ -148,7 +148,7 @@ def main():
     
     # load checkpoint.
     base_path = "checkpoints/defaults/policy_net"
-    steps = 84
+    steps = 23
     model_path = os.path.join(base_path, f"model_{steps}.pth")
     policy_net.load_state_dict(tc.load(model_path, weights_only=True))
     
@@ -180,6 +180,8 @@ def main():
         for row in reader:
             timestep.append(int(row[0]))
             reward.append(float(row[1]))
+            
+    print(np.sum(reward))
 
     # Plot the data
     plt.figure(figsize=(10, 6))

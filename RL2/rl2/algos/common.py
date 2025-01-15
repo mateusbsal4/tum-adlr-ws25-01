@@ -46,19 +46,24 @@ def generate_meta_episode(
         meta_episode: an instance of the meta-episode class.
     """
 
-    env.new_env()
+    # env.new_env()
     meta_episode = MetaEpisode(
         num_timesteps=meta_episode_len,
         dummy_obs=env.reset())
 
     o_t = np.array([env.reset()])
+    done_t = False
+    t = 0
     a_tm1 = np.array([0])
     r_tm1 = np.array([0.0])
     d_tm1 = np.array([1.0])
     h_tm1_policy_net = policy_net.initial_state(batch_size=1)
     h_tm1_value_net = value_net.initial_state(batch_size=1)
+    
+    print(done_t)
 
-    for t in range(0, meta_episode_len):
+    # for t in range(0, meta_episode_len):
+    while not done_t:
         pi_dist_t, h_t_policy_net = policy_net(
             curr_obs=tc.FloatTensor(o_t),
             prev_action=tc.LongTensor(a_tm1),
@@ -76,14 +81,18 @@ def generate_meta_episode(
         a_t = pi_dist_t.sample()
         log_prob_a_t = pi_dist_t.log_prob(a_t)
 
-
+        env.env.render()
+        
         o_tp1, r_t, done_t, _ = env.step(a_t.squeeze(0).detach().numpy().item())
+        done_t = done_t or (t == meta_episode_len)
         
 
         meta_episode.obs[t] = o_t[0]
         meta_episode.acs[t] = a_t.squeeze(0).detach().numpy()
         meta_episode.rews[t] = r_t
+        
         meta_episode.dones[t] = float(done_t)
+        
         meta_episode.logpacs[t] = log_prob_a_t.squeeze(0).detach().numpy()
         meta_episode.vpreds[t] = vpred_t.squeeze(0).detach().numpy()
 
@@ -93,7 +102,16 @@ def generate_meta_episode(
         d_tm1 = np.array([meta_episode.dones[t]])
         h_tm1_policy_net = h_t_policy_net
         h_tm1_value_net = h_t_value_net
-
+        t += 1
+        
+        print("timestep: ", t)
+        print("reward: ", r_t)
+        print(done_t)
+    
+    
+    print(f"mean ep return: {np.mean(meta_episode.rews)}, summed ep return: {np.sum(meta_episode.rews)}")
+    print(done_t)
+    
     return meta_episode
 
 

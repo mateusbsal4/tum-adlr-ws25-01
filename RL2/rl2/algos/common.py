@@ -84,7 +84,7 @@ def generate_meta_episode(
         env.env.render()
         
         o_tp1, r_t, done_t, _ = env.step(a_t.squeeze(0).detach().numpy().item())
-        done_t = done_t or (t == meta_episode_len)
+        done_t = done_t or (t == meta_episode_len-1)
         
 
         meta_episode.obs[t] = o_t[0]

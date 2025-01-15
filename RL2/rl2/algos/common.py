@@ -60,7 +60,7 @@ def generate_meta_episode(
     h_tm1_policy_net = policy_net.initial_state(batch_size=1)
     h_tm1_value_net = value_net.initial_state(batch_size=1)
     
-    print(done_t)
+    # print(done_t)
 
     # for t in range(0, meta_episode_len):
     while not done_t:
@@ -104,13 +104,13 @@ def generate_meta_episode(
         h_tm1_value_net = h_t_value_net
         t += 1
         
-        print("timestep: ", t)
-        print("reward: ", r_t)
-        print(done_t)
+    #     print("timestep: ", t)
+    #     print("reward: ", r_t)
+    #     print(done_t)
     
     
-    print(f"mean ep return: {np.mean(meta_episode.rews)}, summed ep return: {np.sum(meta_episode.rews)}")
-    print(done_t)
+    # print(f"mean ep return: {np.mean(meta_episode.rews)}, summed ep return: {np.sum(meta_episode.rews)}")
+    # print(done_t)
     
     return meta_episode
 

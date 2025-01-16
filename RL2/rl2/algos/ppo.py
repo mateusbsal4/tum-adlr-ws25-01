@@ -180,6 +180,7 @@ def training_loop(
     """
     meta_ep_returns = deque(maxlen=1000)
     log_directory = 'checkpoints/logs/'
+    show_pbar = True # optional: use progress bar to visualize the progress
     
  
     timestep = []
@@ -193,8 +194,11 @@ def training_loop(
         # collect meta-episodes...
         meta_episodes = list()
         
-        # optional: use progress bar to visualize the progress
-        for i in tqdm(range(0, meta_episodes_per_policy_update), desc="Collecting Meta-Episodes"): 
+        if comm.Get_rank() == ROOT_RANK and show_pbar:
+            episode_pbar = tqdm(total=meta_episodes_per_policy_update,  desc="Collecting Meta-Episodes", ncols=80)
+        
+        
+        for i in range(0, meta_episodes_per_policy_update): 
         # for i in range(0, meta_episodes_per_policy_update): 
             # collect one meta-episode and append it to the list
             meta_episode = generate_meta_episode(
@@ -207,6 +211,9 @@ def training_loop(
                 gamma=discount_gamma,
                 lam=gae_lambda)
             meta_episodes.append(meta_episode)
+            
+            if comm.Get_rank() == ROOT_RANK and show_pbar:
+                    episode_pbar.update(1)
 
             # logging
             l_meta_ep_returns = [np.sum(meta_episode.rews)] #local meta episode return from a single worker
@@ -226,7 +233,8 @@ def training_loop(
                     #save to csv
                     writer.writerow([timestep[i], reward[i]])
                 
-            
+        if comm.Get_rank() == ROOT_RANK and show_pbar:
+            episode_pbar.close()
 
         # maybe standardize advantages...
         if standardize_advs:
@@ -255,8 +263,17 @@ def training_loop(
 
         # update policy...
         for opt_epoch in range(ppo_opt_epochs):
+            
             idxs = np.random.permutation(meta_episodes_per_policy_update)
+            if comm.Get_rank() == ROOT_RANK:
+                logging.info(f"pol update {pol_iter}, opt_epoch: {opt_epoch}...")
+                print(f"\npol update {pol_iter}, opt_epoch: {opt_epoch}...\n")
+                if show_pbar:
+                    weight_pbar = tqdm(total=(meta_episodes_per_policy_update//meta_episodes_per_learner_batch), desc="Updating Weights")
+                
+            # optional: progress bar
             for i in range(0, meta_episodes_per_policy_update, meta_episodes_per_learner_batch):
+            # for i in range(0, meta_episodes_per_policy_update, meta_episodes_per_learner_batch):
                 mb_idxs = idxs[i:i+meta_episodes_per_learner_batch]
                 mb_meta_eps = [meta_episodes[idx] for idx in mb_idxs]
                 losses = compute_losses(
@@ -279,7 +296,14 @@ def training_loop(
                 value_optimizer.step()
                 if value_scheduler:
                     value_scheduler.step()
+                    
+                if comm.Get_rank() == ROOT_RANK and show_pbar:
+                    weight_pbar.update(1)
 
+            
+            if comm.Get_rank() == ROOT_RANK and show_pbar:
+                weight_pbar.close()
+            
             # logging
             global_losses = {}
             for name in losses:
@@ -288,12 +312,12 @@ def training_loop(
                 global_losses[name] = loss_avg
 
             if comm.Get_rank() == ROOT_RANK:
-                logging.info(f"pol update {pol_iter}, opt_epoch: {opt_epoch}...")
-                print(f"pol update {pol_iter}, opt_epoch: {opt_epoch}...")
                 for name, value in global_losses.items():
                     logging.info(f"\t{name}: {value:>0.6f}")
                     print(f"\t{name}: {value:>0.6f}")
 
+            
+        
         # misc.: print metrics, save checkpoint.
         if comm.Get_rank() == ROOT_RANK:
             logging.info("-" * 100)

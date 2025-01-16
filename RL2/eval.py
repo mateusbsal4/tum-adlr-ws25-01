@@ -148,7 +148,7 @@ def main():
     
     # load checkpoint.
     base_path = "checkpoints/defaults/policy_net"
-    steps = 10
+    steps = 27
     model_path = os.path.join(base_path, f"model_{steps}.pth")
     policy_net.load_state_dict(tc.load(model_path, weights_only=True))
     

@@ -439,6 +439,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         # We'll define two corners of the helipad around that target chunk index (left & right edges).
         self.helipad_x1 = chunk_x[target_chunk_idx - 1]
         self.helipad_x2 = chunk_x[target_chunk_idx + 1]
+        self.helipad_x = chunk_x[target_chunk_idx]
 
         # Flatten the terrain around the helipad to create a "landing pad."
         # This sets multiple adjacent height points to the same helipad_y value.
@@ -793,6 +794,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             1.0 if self.legs[1].ground_contact else 0.0,
         ]
         assert len(state) == 8
+        # print(f"current pos: {pos.x:>0.6f},{pos.y:>0.6f} with target {self.helipad_x:>0.6f},{(self.helipad_y + LEG_DOWN / SCALE):>0.6f}")
 
         # ---------------------------------------------------------------------------------------
         # REWARD CALCULATION

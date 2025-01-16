@@ -31,7 +31,8 @@ class LunarLanderEnv(MetaEpisodicEnv):
         self.target_x = target_x
         self.target_y = target_y
         self.max_ep_length = max_episode_length
-        self.render_mode = "rgb_array"
+        # self.render_mode = "rgb_array"
+        self.render_mode = "human"
         self.env = gym.make("LunarLanderTargetPos", render_mode=self.render_mode, target_x=self.target_x, target_y = self.target_y)
         self.env = TimeLimit(self.env, self.max_ep_length)      #Wrapper which sets truncated flag to True when maximum episode length is exceeded
 

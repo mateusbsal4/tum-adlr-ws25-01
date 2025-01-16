@@ -180,11 +180,8 @@ def training_loop(
     """
     meta_ep_returns = deque(maxlen=1000)
     log_directory = 'checkpoints/logs/'
-    # Reward saving
     
-    
-    
-    
+ 
     timestep = []
     reward = []
 
@@ -197,8 +194,8 @@ def training_loop(
         meta_episodes = list()
         
         # optional: use progress bar to visualize the progress
-        # for i in tqdm(range(0, meta_episodes_per_policy_update), desc="Collecting Meta-Episodes"): 
-        for i in range(0, meta_episodes_per_policy_update): 
+        for i in tqdm(range(0, meta_episodes_per_policy_update), desc="Collecting Meta-Episodes"): 
+        # for i in range(0, meta_episodes_per_policy_update): 
             # collect one meta-episode and append it to the list
             meta_episode = generate_meta_episode(
                 env=env,
@@ -215,7 +212,7 @@ def training_loop(
             l_meta_ep_returns = [np.sum(meta_episode.rews)] #local meta episode return from a single worker
             g_meta_ep_returns = comm.allgather(l_meta_ep_returns) # global meta episode return from all workers
             g_meta_ep_returns = [x for loc in g_meta_ep_returns for x in loc]
-            meta_ep_returns.extend(meta_ep_returns) # all the rewards from different works in a list
+            meta_ep_returns.extend(g_meta_ep_returns) # all the rewards from different works in a list
             
             #save to csv 
             timestep.append(i)

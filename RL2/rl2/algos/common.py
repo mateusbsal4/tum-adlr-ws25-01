@@ -47,11 +47,12 @@ def generate_meta_episode(
     """
 
     # env.new_env()
+    obs0 = env.reset()
     meta_episode = MetaEpisode(
         num_timesteps=meta_episode_len,
-        dummy_obs=env.reset())
+        dummy_obs=obs0)
 
-    o_t = np.array([env.reset()])
+    o_t = np.array([obs0])
     done_t = False
     t = 0
     a_tm1 = np.array([0])
@@ -60,7 +61,8 @@ def generate_meta_episode(
     h_tm1_policy_net = policy_net.initial_state(batch_size=1)
     h_tm1_value_net = value_net.initial_state(batch_size=1)
     
-    # print(done_t)
+    # print("before loop: \ndone:", done_t)
+    # print("observe: ", o_t, ", reset: ", env.reset())
 
     # for t in range(0, meta_episode_len):
     while not done_t:
@@ -80,8 +82,6 @@ def generate_meta_episode(
 
         a_t = pi_dist_t.sample()
         log_prob_a_t = pi_dist_t.log_prob(a_t)
-
-        env.env.render()
         
         o_tp1, r_t, done_t, _ = env.step(a_t.squeeze(0).detach().numpy().item())
         done_t = done_t or (t == meta_episode_len-1)
@@ -110,7 +110,7 @@ def generate_meta_episode(
     
     
     # print(f"mean ep return: {np.mean(meta_episode.rews)}, summed ep return: {np.sum(meta_episode.rews)}")
-    # print(done_t)
+    # print("after loop: ", done_t)
     
     return meta_episode
 

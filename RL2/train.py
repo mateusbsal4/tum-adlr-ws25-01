@@ -44,7 +44,7 @@ def create_argparser():
     parser.add_argument("--max_episode_len", type=int, default=1_000,  # apparently completely irrelevant (not used anywhere)
                         help="Timesteps before automatic episode reset. " +
                              "Ignored if environment is bandit.")
-    parser.add_argument("--meta_episode_len", type=int, default=250,
+    parser.add_argument("--meta_episode_len", type=int, default=250, 
                         help="Timesteps per meta-episode.")
 
     ### Architecture
@@ -59,10 +59,10 @@ def create_argparser():
 
     ### Training
     parser.add_argument("--max_pol_iters", type=int, default=80)
-    parser.add_argument("--meta_episodes_per_policy_update", type=int, default=-1,
+    parser.add_argument("--meta_episodes_per_policy_update", type=int, default=100,
                         help="If -1, quantity is determined using a formula")
     parser.add_argument("--meta_episodes_per_learner_batch", type=int, default=6)
-    parser.add_argument("--ppo_opt_epochs", type=int, default=20)
+    parser.add_argument("--ppo_opt_epochs", type=int, default=10)
     
     parser.add_argument("--ppo_clip_param", type=float, default=0.10)
     parser.add_argument("--ppo_ent_coef", type=float, default=0.01)

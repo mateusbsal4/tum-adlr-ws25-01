@@ -186,9 +186,9 @@ def main():
     # Plot the data
     plt.figure(figsize=(10, 6))
     plt.plot(timestep, reward, marker="o", linestyle="-", color="r")
-    plt.title("Mean Meta-Episode Return vs. Policy Update")
-    plt.xlabel("Policy Update")
-    plt.ylabel("Mean Meta-Episode Return")
+    plt.title("Reward during Evaluation Episode")
+    plt.xlabel("Timestep")
+    plt.ylabel("Reward")
     plt.grid()
 
     # Save the figure to a PNG file

@@ -484,7 +484,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         # Create the Lander body at the top of the viewport. (initial_x, initial_y)
         # LANDER_POLY is a polygon defining the lander's shape (from the base environment code).
         # We'll also set the fixture properties like density, friction, etc.
-        initial_y = VIEWPORT_H / SCALE
+        initial_y = VIEWPORT_H / SCALE - 1 # -1 is an offset so that the robot doesn't do out of bound due to initial force
         initial_x = VIEWPORT_W / SCALE / 2
         
         self.lander = self.world.CreateDynamicBody(

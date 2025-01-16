@@ -8,6 +8,7 @@ from typing import List, Dict, Optional, Callable
 from collections import deque
 import logging
 import csv
+from tqdm import tqdm
 
 import torch as tc
 import numpy as np
@@ -180,7 +181,7 @@ def training_loop(
     meta_ep_returns = deque(maxlen=1000)
     log_directory = 'checkpoints/logs/'
     # Reward saving
-    csv_file_path = os.path.join(log_directory, "singletraining_reward.csv")
+    
     
     
     
@@ -190,10 +191,14 @@ def training_loop(
     for pol_iter in range(pol_iters_so_far, max_pol_iters):
         # create a new environment
         env.new_env()
+        singlereward_csv_filepath = os.path.join(log_directory, f"politer{pol_iter}_reward.csv")
         
         # collect meta-episodes...
         meta_episodes = list()
-        for i in range(0, meta_episodes_per_policy_update):
+        
+        # optional: use progress bar to visualize the progress
+        # for i in tqdm(range(0, meta_episodes_per_policy_update), desc="Collecting Meta-Episodes"): 
+        for i in range(0, meta_episodes_per_policy_update): 
             # collect one meta-episode and append it to the list
             meta_episode = generate_meta_episode(
                 env=env,
@@ -210,15 +215,14 @@ def training_loop(
             l_meta_ep_returns = [np.sum(meta_episode.rews)] #local meta episode return from a single worker
             g_meta_ep_returns = comm.allgather(l_meta_ep_returns) # global meta episode return from all workers
             g_meta_ep_returns = [x for loc in g_meta_ep_returns for x in loc]
-            meta_ep_returns.extend(g_meta_ep_returns)
+            meta_ep_returns.extend(meta_ep_returns) # all the rewards from different works in a list
             
-            #save to csv for first training loop
-            if pol_iter == pol_iters_so_far:
-                timestep.append(i)
-                reward.append(g_meta_ep_returns)
+            #save to csv 
+            timestep.append(i)
+            reward.append(meta_ep_returns)
                 
-        if pol_iter == pol_iters_so_far:
-            with open(csv_file_path, mode='w', newline='') as csv_file:
+        
+            with open(singlereward_csv_filepath, mode='w', newline='') as csv_file:
                 writer = csv.writer(csv_file)
                 writer.writerow(['Episode', 'Reward'])  # Header
                 for i in range(len(timestep)):

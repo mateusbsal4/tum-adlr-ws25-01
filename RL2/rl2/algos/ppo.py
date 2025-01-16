@@ -180,7 +180,7 @@ def training_loop(
     """
     meta_ep_returns = deque(maxlen=1000)
     log_directory = 'checkpoints/logs/'
-    show_pbar = True # optional: use progress bar to visualize the progress
+    show_pbar = False # optional: use progress bar to visualize the progress
     
  
     timestep = []

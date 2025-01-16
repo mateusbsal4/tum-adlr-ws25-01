@@ -420,7 +420,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         # helipad_y and helipad_x define where the lander should actually land:
         # The user can customize target_x, target_y, which modifies the final pad location.
         self.helipad_y = (H / 10) * self.target_y + H / 4
-        self.helipad_x = (W / 5) * self.target_x + W / 2
+        self.helipad_x = W * self.target_x
 
         # ---------------------------------------------------------------------------------------
         # Find the chunk index closest to helipad_x so we can flatten the terrain around that chunk.
@@ -770,7 +770,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         pos = self.lander.position
         vel = self.lander.linearVelocity
         
-        W = VIEWPORT_W / SCALE
+        W = VIEWPORT_W / SCALE # 20
         H = VIEWPORT_H / SCALE
         
         # Build an 8D state vector:

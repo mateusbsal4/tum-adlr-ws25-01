@@ -159,8 +159,8 @@ def main():
         evaluation_loop(
             env = env,
             policy_net = policy_net,
-            target_x = 5,
-            target_y = 1,
+            target_x = 0, # between 0 and 1
+            target_y = 0, # between 0 and 1
             writer = writer,
         )
     print("end evaluating")

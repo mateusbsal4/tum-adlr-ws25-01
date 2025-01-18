@@ -24,7 +24,7 @@ def create_env():
 
 # Create the vectorized environment
 # env = DummyVecEnv([create_env])
-env = gym.make("LunarLander-v3", render_mode="rgb_array")
+env = gym.make("LunarLander-v3", render_mode="human")
 
 # # Initialize the PPO model
 # model = PPO(

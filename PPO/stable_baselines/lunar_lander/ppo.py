@@ -23,8 +23,6 @@ except ImportError:
 
 
 
-
-
 # Register custom environment
 register(
     id="LunarLanderTargetPos",
@@ -73,11 +71,8 @@ def evaluate(env_id, model_path, render_mode, log_reward):
         raise ImportError("render_browser is not installed or available.")
 
     env_kwargs = {"target_x": 5, "target_y": 5}
-    if render_mode == "human":
-        env_kwargs["render_mode"] = "human"
-    elif render_mode == "rgb_array":
-        env_kwargs["render_mode"] = "rgb_array"
-
+    env_kwargs["render_mode"] = render_mode
+    
     # Ensure the latest model is loaded if model_path is default
     if model_path == "models":
         if not os.path.exists(model_path) or not os.listdir(model_path):
@@ -95,22 +90,36 @@ def evaluate(env_id, model_path, render_mode, log_reward):
     episode_over = False
     rewards = []
     total_reward = 0
+    
+    while not episode_over:
+        if render_mode == "human":
+            env.render()
+        action, _ = model.predict(obs)
+        obs, reward, terminated, truncated, info = env.step(action)
+        total_reward += reward
+        rewards.append(reward)
+        episode_over = terminated or truncated
+        sleep(0.02)
+    env.close()
+    print(f"Evaluation completed. Total reward: {total_reward}")
+    
+    # Plot the data
+    plt.figure(figsize=(10, 6))
+    plt.plot(rewards, marker="o", linestyle="-", color="r")
+    plt.title("Reward during Evaluation Episode")
+    plt.xlabel("Timestep")
+    plt.ylabel("Reward")
+    plt.grid()
 
-    # @render_browser
-    def run_episode():
-        nonlocal obs, episode_over, total_reward
-        while not episode_over:
-            if render_mode == "human":
-                env.render()
-            action, _ = model.predict(obs)
-            obs, reward, terminated, truncated, info = env.step(action)
-            total_reward += reward
-            rewards.append(total_reward)
-            episode_over = terminated or truncated
-            sleep(0.02)
+    # Save the figure to a PNG file
+    print(os.listdir("models"))
+    model_name = "model_20241216_150858"
+    plot_path = f"reward_log/eval/curve_{model_name}"
+    os.makedirs("reward_log/eval", exist_ok=True)
+    plt.savefig(plot_path, dpi=300)  # dpi=300 for high-resolution
+    print(f"Plot saved as {plot_path}")
 
-        env.close()
-        print(f"Evaluation completed. Total reward: {total_reward}")
+    
 
 
 

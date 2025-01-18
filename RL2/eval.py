@@ -42,7 +42,7 @@ from rl2.utils.constants import ROOT_RANK
 from rl2.utils.optim_util import get_weight_decay_param_groups
 # from render_browser import render_browser
 
-
+from rl2.utils.eval_plotter import eval_plotter
 
 
 # @render_browser
@@ -109,14 +109,15 @@ def main():
         
         
     # logging --------
-    log_directory = 'checkpoints/logs/'
+    save_dir = "checkpoints_fixed"
+    log_directory = os.path.join(save_dir, "logs")
     os.makedirs(log_directory, exist_ok=True)
     log_filename = os.path.join(log_directory, 'eval_log.txt')
     logging.basicConfig(
         filename=log_filename,  # Output file where logs will be saved
         level=logging.INFO,           # Log level (INFO, DEBUG, etc.)
         format='%(asctime)s - %(levelname)s - %(message)s',  # Log message format
-        filemode='a')                 # 'w' for writing (overwrites existing file), 'a' for appending
+        filemode='w')                 # 'w' for writing (overwrites existing file), 'a' for appending
     print('start logging')
     logging.info("start logging")
     
@@ -147,8 +148,8 @@ def main():
 
     
     # load checkpoint.
-    base_path = "checkpoints/defaults/policy_net"
-    steps = 27
+    base_path = os.path.join(save_dir, "defaults/policy_net")
+    steps = 14
     model_path = os.path.join(base_path, f"model_{steps}.pth")
     policy_net.load_state_dict(tc.load(model_path, weights_only=True))
     
@@ -197,6 +198,8 @@ def main():
 
     # Optionally show the plot (can be omitted if not needed)
     # plt.show()
+    
+    eval_plotter()
 
 if __name__ == "__main__":
     main()

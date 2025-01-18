@@ -48,8 +48,11 @@ class LunarLanderEnv(MetaEpisodicEnv):
         Returns:
             None
         """
-        self.target_x = np.random.uniform(0, 1)             # brings the target value between 0 and 20 - like the environment bounds
-        self.target_y = np.random.uniform(0, 1)             # brings the target value between 3 and 5 (env bounds = 0 - 13)
+        # self.target_x = np.random.uniform(0, 1)             # brings the target value between 0 and 20 - like the environment bounds
+        # self.target_y = np.random.uniform(0, 1)             # brings the target value between 3 and 5 (env bounds = 0 - 13)
+        self.target_x = 0.3
+        self.target_y = 0.4
+        
         self.env = gym.make("LunarLanderTargetPos", render_mode=self.render_mode, target_x=self.target_x, target_y = self.target_y)
         self.env = TimeLimit(self.env, max_episode_steps=self.max_ep_length)
 

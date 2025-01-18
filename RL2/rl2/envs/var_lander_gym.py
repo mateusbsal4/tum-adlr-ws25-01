@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Optional
 
 from render_browser import render_browser
 import numpy as np
+import logging
 
 import gymnasium as gym
 from gymnasium import error, spaces
@@ -794,7 +795,6 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             1.0 if self.legs[1].ground_contact else 0.0,
         ]
         assert len(state) == 8
-        # print(f"current pos: {pos.x:>0.6f},{pos.y:>0.6f} with target {self.helipad_x:>0.6f},{(self.helipad_y + LEG_DOWN / SCALE):>0.6f}")
 
         # ---------------------------------------------------------------------------------------
         # REWARD CALCULATION
@@ -805,14 +805,15 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         #  4) leg contacts
         # The agent is encouraged to reduce distance, velocity, angle, and to keep both legs on ground.
         shaping = (
-            # -100 * np.sqrt((state[0] - self.target_x)**2 + (state[1] - self.target_y)**2)
-            # - 100 * np.sqrt(state[2]**2 + state[3]**2)
              -100 * np.sqrt(state[0] * state[0] + state[1] * state[1])
             - 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])
             - 100 * abs(state[4])
             + 10 * state[6]
             + 10 * state[7]
-        )
+        ) # And ten points for legs contact, the idea is if you
+        # lose contact again after landing, you get negative reward
+        
+        
 
         # The difference in shaping from the previous step is given as reward.
         reward = 0
@@ -840,6 +841,12 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         if self.render_mode == "human":
             self.render()
         # truncation=False as the time limit is handled by the `TimeLimit` wrapper added during `make`
+        
+        #debugging rewards
+        logging.info(f"x_reward: {-100 * np.sqrt(state[0] * state[0] + state[1] * state[1])}, y_reward: {- 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])}, \
+              calculated reward: {shaping}, actual reward: {reward}")
+        
+        
         return np.array(state, dtype=np.float32), reward, terminated, False, {}
 
 

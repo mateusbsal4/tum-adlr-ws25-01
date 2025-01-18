@@ -44,7 +44,7 @@ def create_argparser():
     parser.add_argument("--max_episode_len", type=int, default=1_000,  # apparently completely irrelevant (not used anywhere)
                         help="Timesteps before automatic episode reset. " +
                              "Ignored if environment is bandit.")
-    parser.add_argument("--meta_episode_len", type=int, default=250, 
+    parser.add_argument("--meta_episode_len", type=int, default=1_000, 
                         help="Timesteps per meta-episode.")
 
     ### Architecture
@@ -176,9 +176,12 @@ def create_net(
 
 # @render_browser
 def main():
-    
+        
+    args = create_argparser().parse_args()
+    comm = get_comm()
+
     # logging --------
-    log_directory = 'checkpoints/logs/'
+    log_directory = os.path.join(args.checkpoint_dir,"logs")
     os.makedirs(log_directory, exist_ok=True)
     log_filename = os.path.join(log_directory, 'training_log.txt')
     logging.basicConfig(
@@ -188,9 +191,6 @@ def main():
         filemode='a')                 # 'w' for writing (overwrites existing file), 'a' for appending
     print('start logging')
     logging.info("start logging")
-    
-    args = create_argparser().parse_args()
-    comm = get_comm()
 
     # create env.
     env = create_env(

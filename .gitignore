@@ -11,3 +11,4 @@
 test.py
 /test/
 **/backup/
+**/checkpoints*

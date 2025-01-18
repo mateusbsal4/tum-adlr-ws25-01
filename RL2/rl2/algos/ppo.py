@@ -178,8 +178,8 @@ def training_loop(
     Returns:
         None
     """
-    meta_ep_returns = deque(maxlen=1000)
-    log_directory = 'checkpoints/logs/'
+    meta_ep_returns = deque(maxlen=1000) 
+    log_directory = 'checkpointsfixed/logs/'
     show_pbar = False # optional: use progress bar to visualize the progress
     
  
@@ -226,12 +226,12 @@ def training_loop(
             reward.append(meta_ep_returns)
                 
         
-            with open(singlereward_csv_filepath, mode='w', newline='') as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(['Episode', 'Reward'])  # Header
-                for i in range(len(timestep)):
-                    #save to csv
-                    writer.writerow([timestep[i], reward[i]])
+            # with open(singlereward_csv_filepath, mode='w', newline='') as csv_file:
+            #     writer = csv.writer(csv_file)
+            #     writer.writerow(['Episode', 'Reward'])  # Header
+            #     for i in range(len(timestep)):
+            #         #save to csv
+            #         writer.writerow([timestep[i], reward[i]])
                 
         if comm.Get_rank() == ROOT_RANK and show_pbar:
             episode_pbar.close()

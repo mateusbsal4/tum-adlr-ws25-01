@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 
 # Path to your log file
-file_path = "checkpoints/logs/"
+file_path = "checkpoints_fixed/logs/"
 log_file_path = os.path.join(file_path, "training_log.txt")
 csv_file_path = os.path.join(file_path, "train_reward.csv")
 

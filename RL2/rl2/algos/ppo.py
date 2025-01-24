@@ -179,8 +179,8 @@ def training_loop(
         None
     """
     meta_ep_returns = deque(maxlen=1000) 
-    log_directory = 'checkpointsfixed/logs/'
-    show_pbar = False # optional: use progress bar to visualize the progress
+    log_directory = 'checkpoints_fixed/logs/'
+    show_pbar = True # optional: use progress bar to visualize the progress
     
  
     timestep = []
@@ -197,9 +197,10 @@ def training_loop(
         if comm.Get_rank() == ROOT_RANK and show_pbar:
             episode_pbar = tqdm(total=meta_episodes_per_policy_update,  desc="Collecting Meta-Episodes", ncols=80)
         
+        successful_episodes = 0
+        failed_episodes = 0
         
         for i in range(0, meta_episodes_per_policy_update): 
-        # for i in range(0, meta_episodes_per_policy_update): 
             # collect one meta-episode and append it to the list
             meta_episode = generate_meta_episode(
                 env=env,
@@ -215,6 +216,21 @@ def training_loop(
             if comm.Get_rank() == ROOT_RANK and show_pbar:
                     episode_pbar.update(1)
 
+            # check if episode was successful or failed
+            rewards = meta_episode.rews  # Get the last reward of the episode
+            last_reward = rewards[rewards != 0][-1]
+            
+            # if show_pbar:
+            #     print("last reward: ", last_reward)
+            #     if rewards[rewards != 0][-1] != 0.0:  # No reward was collected
+            #         print("No success after ", len(rewards[rewards != 0])," steps, reward: ", last_reward)
+            
+            if last_reward == 100:  # Success condition
+                successful_episodes += 1
+            elif last_reward == -100:  # Failure condition
+                failed_episodes += 1
+
+                        
             # logging
             l_meta_ep_returns = [np.sum(meta_episode.rews)] #local meta episode return from a single worker
             g_meta_ep_returns = comm.allgather(l_meta_ep_returns) # global meta episode return from all workers
@@ -225,13 +241,18 @@ def training_loop(
             timestep.append(i)
             reward.append(meta_ep_returns)
                 
-        
             # with open(singlereward_csv_filepath, mode='w', newline='') as csv_file:
             #     writer = csv.writer(csv_file)
             #     writer.writerow(['Episode', 'Reward'])  # Header
             #     for i in range(len(timestep)):
             #         #save to csv
             #         writer.writerow([timestep[i], reward[i]])
+            
+        print("finished collecting.")
+        
+        if show_pbar:
+            print(f"pol iter {pol_iter}: {successful_episodes} successes, {failed_episodes} failures, out of {meta_episodes_per_policy_update}")
+
                 
         if comm.Get_rank() == ROOT_RANK and show_pbar:
             episode_pbar.close()

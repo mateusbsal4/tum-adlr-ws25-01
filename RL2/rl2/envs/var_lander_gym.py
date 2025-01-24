@@ -420,7 +420,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         # ---------------------------------------------------------------------------------------
         # helipad_y and helipad_x define where the lander should actually land:
         # The user can customize target_x, target_y, which modifies the final pad location.
-        self.helipad_y = (H / 10) * self.target_y + H / 4
+        self.helipad_y = H / 4
         self.helipad_x = W * self.target_x
 
         # ---------------------------------------------------------------------------------------
@@ -785,8 +785,9 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         #  7) right leg contact (0 or 1)
         
         state = [
-            (pos.x - self.helipad_x) / (W / 2),
-            (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (H/ 2),
+            # original reward for target position 0,0
+            (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2),
+            (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2),
             vel.x * (VIEWPORT_W / SCALE / 2) / FPS,
             vel.y * (VIEWPORT_H / SCALE / 2) / FPS,
             self.lander.angle,

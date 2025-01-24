@@ -55,13 +55,13 @@ def create_argparser():
 
     ### Checkpointing
     parser.add_argument("--model_name", type=str, default='defaults')
-    parser.add_argument("--checkpoint_dir", type=str, default='checkpoints')
+    parser.add_argument("--checkpoint_dir", type=str, default='checkpoints_fixed')
 
     ### Training
     parser.add_argument("--max_pol_iters", type=int, default=80)
     parser.add_argument("--meta_episodes_per_policy_update", type=int, default=100,
                         help="If -1, quantity is determined using a formula")
-    parser.add_argument("--meta_episodes_per_learner_batch", type=int, default=6)
+    parser.add_argument("--meta_episodes_per_learner_batch", type=int, default=12)
     parser.add_argument("--ppo_opt_epochs", type=int, default=10)
     
     parser.add_argument("--ppo_clip_param", type=float, default=0.10)
@@ -69,7 +69,7 @@ def create_argparser():
     parser.add_argument("--discount_gamma", type=float, default=0.99)
     parser.add_argument("--gae_lambda", type=float, default=0.3)
     parser.add_argument("--standardize_advs", type=int, choices=[0,1], default=0)
-    parser.add_argument("--adam_lr", type=float, default=2e-4)
+    parser.add_argument("--adam_lr", type=float, default=2e-3)
     parser.add_argument("--adam_eps", type=float, default=1e-5)
     parser.add_argument("--adam_wd", type=float, default=0.01)
     return parser
@@ -292,7 +292,7 @@ def main():
         denom = comm.Get_size() * args.meta_episode_len
         meta_episodes_per_policy_update = numer // denom
     else:
-        meta_episodes_per_policy_update = args.meta_episodes_per_policy_update
+        meta_episodes_per_policy_update = args.meta_episodes_per_policy_update // comm.Get_size()
 
     
     training_loop(

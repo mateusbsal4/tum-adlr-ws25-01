@@ -221,14 +221,19 @@ def training_loop(
             last_reward = rewards[rewards != 0][-1]
             
             # if show_pbar:
-            #     print("last reward: ", last_reward)
+            # print(i, "last reward: ", last_reward)
             #     if rewards[rewards != 0][-1] != 0.0:  # No reward was collected
             #         print("No success after ", len(rewards[rewards != 0])," steps, reward: ", last_reward)
+            if last_reward != -100:
+                print("Success after ", len(rewards[rewards != 0])," steps, reward: ", last_reward)
             
-            if last_reward == 100:  # Success condition
-                successful_episodes += 1
-            elif last_reward == -100:  # Failure condition
-                failed_episodes += 1
+            # local success and failure counts
+            local_successful_episodes = 1 if last_reward == 100 else 0
+            local_failed_episodes = 1 if last_reward == -100 else 0
+
+            # gather success and failure counts across workers
+            successful_episodes += comm.allreduce(local_successful_episodes, op=MPI.SUM)
+            failed_episodes += comm.allreduce(local_failed_episodes, op=MPI.SUM)
 
                         
             # logging

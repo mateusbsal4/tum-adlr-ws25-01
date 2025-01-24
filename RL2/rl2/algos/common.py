@@ -85,10 +85,11 @@ def generate_meta_episode(
         
         o_tp1, r_t, done_t, _ = env.step(a_t.squeeze(0).detach().numpy().item())
         done_t = done_t or (t == meta_episode_len-1)
-        if t==meta_episode_len-1 and not env.lander.awake:
-            r_t = +100
-        else:
-            r_t = -100
+        
+        if t==meta_episode_len-1:
+            if r_t != 0:
+                r_t = -100
+            
         
 
         meta_episode.obs[t] = o_t[0]

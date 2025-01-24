@@ -31,8 +31,9 @@ class LunarLanderEnv(MetaEpisodicEnv):
         self.target_x = target_x
         self.target_y = target_y
         self.max_ep_length = max_episode_length
-        # self.render_mode = "rgb_array"
-        self.render_mode = "human"
+        self.render_mode = "rgb_array"
+        # self.render_mode = "human"
+        
         self.env = gym.make("LunarLanderTargetPos", render_mode=self.render_mode, target_x=self.target_x, target_y = self.target_y)
         self.env = TimeLimit(self.env, self.max_ep_length)      #Wrapper which sets truncated flag to True when maximum episode length is exceeded
 
@@ -63,6 +64,7 @@ class LunarLanderEnv(MetaEpisodicEnv):
         """
         self.target_x = target_x
         self.target_y = target_y
+
         self.env = gym.make("LunarLanderTargetPos", render_mode=self.render_mode, target_x=self.target_x, target_y = self.target_y)
 
     def reset(self) -> np.ndarray[np.float32]:
@@ -74,6 +76,7 @@ class LunarLanderEnv(MetaEpisodicEnv):
             initial state.
         """
         state, _ = self.env.reset()
+
         return state
 
     def step(self, action) -> Tuple[np.ndarray[np.float32], float, bool, dict]:
@@ -89,7 +92,7 @@ class LunarLanderEnv(MetaEpisodicEnv):
 
         state, reward, terminated, truncated, _ = self.env.step(action)
         done = terminated or truncated
-        if done:
-            state = self.reset()
+        # if done:
+        #     state = self.reset()
 
         return state, reward, done, {}

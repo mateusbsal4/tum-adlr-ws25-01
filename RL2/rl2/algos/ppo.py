@@ -27,101 +27,88 @@ from rl2.utils.comm_util import sync_grads
 from rl2.utils.constants import ROOT_RANK
 
 
+
 def compute_losses(
-        meta_episodes: List[MetaEpisode],
+        obs: np.ndarray,
+        acs: np.ndarray,
+        rews: np.ndarray,
+        dones: np.ndarray,
+        logpacs_old: np.ndarray,
+        advs: np.ndarray,
+        tdlam_rets: np.ndarray,
         policy_net: StatefulPolicyNet,
         value_net: StatefulValueNet,
         clip_param: float,
         ent_coef: float
-    ) -> Dict[str, tc.Tensor]:
-    """
-    Computes the losses for Proximal Policy Optimization.
+    ):
+        """
+        Computes PPO losses given flattened arrays for timesteps.
 
-    Args:
-        meta_episodes: list of meta-episodes.
-        policy_net: policy network.
-        value_net: value network.
-        clip_param: clip parameter for PPO.
-        ent_coef: entropy coefficient for PPO.
+        obs: shape [N, obs_dim]
+        acs, rews, dones, logpacs_old, advs, tdlam_rets: shape [N]
+        """
 
-    Returns:
-        loss_dict: a dictionary of losses.
-    """
-    def get_tensor(field, dtype=None):
-        mb_field = np.stack(
-            list(map(lambda metaep: getattr(metaep, field), meta_episodes)),
-            axis=0)
-        if dtype == 'long':
-            return tc.LongTensor(mb_field)
-        return tc.FloatTensor(mb_field)
+        # Convert to tensors
+        B = len(rews)
+        t_obs = tc.FloatTensor(obs)                   # [N, obs_dim]
+        t_acs = tc.LongTensor(acs)                    # [N]
+        t_rews = tc.FloatTensor(rews)                 # [N]
+        t_dones = tc.FloatTensor(dones)               # [N]
+        t_logpacs_old = tc.FloatTensor(logpacs_old)   # [N]
+        t_advs = tc.FloatTensor(advs)                 # [N]
+        t_tdlam_rets = tc.FloatTensor(tdlam_rets)     # [N]
+        prev_state_policy_net = policy_net.initial_state(batch_size=B)
+        prev_state_value_net = value_net.initial_state(batch_size=B)
 
-    # minibatch data tensors
-    mb_obs = get_tensor('obs', 'long')
-    mb_acs = get_tensor('acs', 'long')
-    mb_rews = get_tensor('rews')
-    mb_dones = get_tensor('dones')
-    mb_logpacs = get_tensor('logpacs')
-    mb_advs = get_tensor('advs')
-    mb_tdlam_rets = get_tensor('tdlam_rets')
+        # Forward through feed-forward policy & value
+        pi_dists, _ = policy_net(
+            curr_obs=t_obs,
+            prev_action=t_acs,
+            prev_reward=t_rews,
+            prev_done=t_dones,
+            prev_state=prev_state_policy_net) # distribution over actions, shape [N, ...]
+        
+        vpreds, _ = value_net(
+            curr_obs=t_obs,
+            prev_action=t_acs,
+            prev_reward=t_rews,
+                prev_done=t_dones,
+            prev_state=prev_state_value_net)          # predicted values, shape [N]
+        # If your nets are originally RNN-based, you'd need to handle sequence states carefully.
 
-    # input for loss calculations
-    B = len(meta_episodes)
-    ac_dummy = tc.zeros(dtype=tc.int64, size=(B,))
-    rew_dummy = tc.zeros(dtype=tc.float32, size=(B,))
-    done_dummy = tc.ones(dtype=tc.float32, size=(B,))
+        # Entropy
+        entropies = pi_dists.entropy()     # shape [N]
+        vpreds_new = vpreds
+        
+        meanent = entropies.mean()
+        policy_entropy_bonus = ent_coef * meanent
 
-    curr_obs = mb_obs
-    prev_action = tc.cat((ac_dummy.unsqueeze(1), mb_acs[:, 0:-1]), dim=1)
-    prev_reward = tc.cat((rew_dummy.unsqueeze(1), mb_rews[:, 0:-1]), dim=1)
-    prev_done = tc.cat((done_dummy.unsqueeze(1), mb_dones[:, 0:-1]), dim=1)
-    prev_state_policy_net = policy_net.initial_state(batch_size=B)
-    prev_state_value_net = value_net.initial_state(batch_size=B)
+        # New logp
+        logpacs_new = pi_dists.log_prob(t_acs)  # shape [N]
+        
+        # PPO ratio
+        policy_ratios = tc.exp(logpacs_new - t_logpacs_old)
+        clipped_ratios = tc.clip(policy_ratios, 1 - clip_param, 1 + clip_param)
+        surr1 = t_advs * policy_ratios
+        surr2 = t_advs * clipped_ratios
+        policy_surrogate_objective = tc.mean(tc.min(surr1, surr2))
+        
+        # composite policy loss
+        policy_loss = -(policy_surrogate_objective + policy_entropy_bonus)
 
-    # forward pass implements unroll for recurrent/attentive architectures.
-    pi_dists, _ = policy_net(
-        curr_obs=curr_obs,
-        prev_action=prev_action,
-        prev_reward=prev_reward,
-        prev_done=prev_done,
-        prev_state=prev_state_policy_net)
+        # value loss
+        value_loss = tc.mean(huber_func(t_tdlam_rets, vpreds_new))
 
-    vpreds, _ = value_net(
-        curr_obs=curr_obs,
-        prev_action=prev_action,
-        prev_reward=prev_reward,
-        prev_done=prev_done,
-        prev_state=prev_state_value_net)
+        # clipfrac
+        clipfrac = tc.mean(tc.greater(surr1, surr2).float())
 
-    entropies = pi_dists.entropy()
-    logpacs_new = pi_dists.log_prob(mb_acs)
-    vpreds_new = vpreds
+        return {
+            "policy_loss": policy_loss,
+            "value_loss": value_loss,
+            "meanent": meanent,
+            "clipfrac": clipfrac
+        }
 
-    # entropy bonus
-    meanent = tc.mean(entropies)
-    policy_entropy_bonus = ent_coef * meanent
-
-    # policy surrogate objective
-    policy_ratios = tc.exp(logpacs_new - mb_logpacs)
-    clipped_policy_ratios = tc.clip(policy_ratios, 1-clip_param, 1+clip_param)
-    surr1 = mb_advs * policy_ratios
-    surr2 = mb_advs * clipped_policy_ratios
-    policy_surrogate_objective = tc.mean(tc.min(surr1, surr2))
-
-    # composite policy loss
-    policy_loss = -(policy_surrogate_objective + policy_entropy_bonus)
-
-    # value loss
-    value_loss = tc.mean(huber_func(mb_tdlam_rets, vpreds_new))
-
-    # clipfrac
-    clipfrac = tc.mean(tc.greater(surr1, surr2).float())
-
-    return {
-        "policy_loss": policy_loss,
-        "value_loss": value_loss,
-        "meanent": meanent,
-        "clipfrac": clipfrac
-    }
 
 
 def training_loop(
@@ -178,6 +165,44 @@ def training_loop(
     Returns:
         None
     """
+    
+
+    def flatten_episodes(meta_episodes):
+        """
+        Flatten a list of MetaEpisode into arrays of shape [N, ...],
+        where N is the total number of timesteps across all episodes.
+        """
+        obs_list = []
+        acs_list = []
+        rews_list = []
+        dones_list = []
+        logpacs_list = []
+        advs_list = []
+        tdlam_rets_list = []
+
+        for ep in meta_episodes:
+            obs_list.append(ep.obs)           # shape [T, obs_dim]
+            acs_list.append(ep.acs)           # shape [T]
+            rews_list.append(ep.rews)         # shape [T]
+            dones_list.append(ep.dones)       # shape [T]
+            logpacs_list.append(ep.logpacs)   # shape [T]
+            advs_list.append(ep.advs)         # shape [T]
+            tdlam_rets_list.append(ep.tdlam_rets)  # shape [T]
+
+        # Concatenate along time dimension
+        obs = np.concatenate(obs_list, axis=0)         # [N, obs_dim]
+        acs = np.concatenate(acs_list, axis=0)         # [N]
+        rews = np.concatenate(rews_list, axis=0)       # [N]
+        dones = np.concatenate(dones_list, axis=0)     # [N]
+        logpacs = np.concatenate(logpacs_list, axis=0) # [N]
+        advs = np.concatenate(advs_list, axis=0)       # [N]
+        tdlam_rets = np.concatenate(tdlam_rets_list, axis=0)  # [N]
+
+        return (
+            obs, acs, rews, dones, logpacs, advs, tdlam_rets
+            )
+
+
     meta_ep_returns = deque(maxlen=1000) 
     log_directory = 'checkpoints_fixed/logs/'
     show_pbar = True # optional: use progress bar to visualize the progress
@@ -194,38 +219,55 @@ def training_loop(
         # collect meta-episodes...
         meta_episodes = list()
         
+        timesteps_per_pol_update = 2048
         if comm.Get_rank() == ROOT_RANK and show_pbar:
-            episode_pbar = tqdm(total=meta_episodes_per_policy_update,  desc="Collecting Meta-Episodes", ncols=80)
+            episode_pbar = tqdm(total=timesteps_per_pol_update,  desc="Collecting Meta-Episodes", ncols=80)
         
         successful_episodes = 0
         failed_episodes = 0
         
-        for i in range(0, meta_episodes_per_policy_update): 
+        local_episode_count = 0
+        
+        
+        local_timesteps = 0
+        total_timesteps = 0
+        
+        while total_timesteps < timesteps_per_pol_update:
+        # for i in range(0, meta_episodes_per_policy_update): 
+            
             # collect one meta-episode and append it to the list
             meta_episode = generate_meta_episode(
                 env=env,
                 policy_net=policy_net,
                 value_net=value_net,
-                meta_episode_len=meta_episode_len)
+                )
             meta_episode = assign_credit(
                 meta_episode=meta_episode,
                 gamma=discount_gamma,
                 lam=gae_lambda)
             meta_episodes.append(meta_episode)
             
-            if comm.Get_rank() == ROOT_RANK and show_pbar:
-                    episode_pbar.update(1)
-
+            
             # check if episode was successful or failed
             rewards = meta_episode.rews  # Get the last reward of the episode
-            last_reward = rewards[rewards != 0][-1]
+            last_reward = rewards[-1]
             
-            # if show_pbar:
-            # print(i, "last reward: ", last_reward)
-            #     if rewards[rewards != 0][-1] != 0.0:  # No reward was collected
-            #         print("No success after ", len(rewards[rewards != 0])," steps, reward: ", last_reward)
+            local_episode_count += 1
+            episode_count = comm.allreduce(local_episode_count, op=MPI.SUM)
+            
+            local_timesteps = len(rewards)
+            global_timesteps = comm.allreduce(local_timesteps, op=MPI.SUM)
+            total_timesteps += global_timesteps
+            # print("local: ", local_timesteps, " total timesteps: ", total_timesteps)
+            
+            if comm.Get_rank() == ROOT_RANK and show_pbar:
+                    episode_pbar.update(global_timesteps)
+
+            
+            # flag any successful or ununsual episodes
             if last_reward != -100:
-                print("Success after ", len(rewards[rewards != 0])," steps, reward: ", last_reward)
+                print("Success after ", len(rewards)," steps, reward: ", last_reward)
+                logging.info("Success after ", len(rewards)," steps, reward: ", last_reward)
             
             # local success and failure counts
             local_successful_episodes = 1 if last_reward == 100 else 0
@@ -243,8 +285,8 @@ def training_loop(
             meta_ep_returns.extend(g_meta_ep_returns) # all the rewards from different works in a list
             
             #save to csv 
-            timestep.append(i)
-            reward.append(meta_ep_returns)
+            # timestep.append(i)
+            # reward.append(meta_ep_returns)
                 
             # with open(singlereward_csv_filepath, mode='w', newline='') as csv_file:
             #     writer = csv.writer(csv_file)
@@ -253,10 +295,10 @@ def training_loop(
             #         #save to csv
             #         writer.writerow([timestep[i], reward[i]])
             
-        print("finished collecting.")
+        print("\nfinished collecting after ", total_timesteps, " timesteps")
         
         if show_pbar:
-            print(f"pol iter {pol_iter}: {successful_episodes} successes, {failed_episodes} failures, out of {meta_episodes_per_policy_update}")
+            print(f"pol iter {pol_iter}: {successful_episodes} successes, {failed_episodes} failures, out of {episode_count} episodes")
 
                 
         if comm.Get_rank() == ROOT_RANK and show_pbar:
@@ -287,50 +329,87 @@ def training_loop(
                 logging.info(f"Mean advantage: {mean_adv_r0}")
                 print(f"Mean advantage: {mean_adv_r0}")
 
-        # update policy...
+        # Suppose you've just collected `meta_episodes` via generate_meta_episode, etc.
+        # Flatten them into a single buffer of timesteps
+        (
+            obs,
+            acs,
+            rews,
+            dones,
+            logpacs,
+            advs,
+            tdlam_rets
+        ) = flatten_episodes(meta_episodes)
+
+        N = acs.shape[0]  # total timesteps collected
+        indices = np.arange(N)
+
         for opt_epoch in range(ppo_opt_epochs):
+            # Shuffle all timesteps
+            np.random.shuffle(indices)
             
-            idxs = np.random.permutation(meta_episodes_per_policy_update)
+            batch_size = 64
+
             if comm.Get_rank() == ROOT_RANK:
                 logging.info(f"pol update {pol_iter}, opt_epoch: {opt_epoch}...")
                 print(f"\npol update {pol_iter}, opt_epoch: {opt_epoch}...\n")
                 if show_pbar:
-                    weight_pbar = tqdm(total=(meta_episodes_per_policy_update//meta_episodes_per_learner_batch), desc="Updating Weights")
+                    # total number of minibatches
+                    total_mb = (N // batch_size)
+                    weight_pbar = tqdm(total=total_mb, desc="Updating Weights")
+
+            # Slice minibatches of timesteps
+            for start_idx in range(0, N, batch_size):
+                end_idx = start_idx + batch_size
+                mb_idxs = indices[start_idx:end_idx]
+
+                # Extract the minibatch from flattened arrays
+                mb_obs = obs[mb_idxs]
+                mb_acs = acs[mb_idxs]
+                mb_rews = rews[mb_idxs]
+                mb_dones = dones[mb_idxs]
+                mb_logpacs = logpacs[mb_idxs]
+                mb_advs = advs[mb_idxs]
+                mb_tdlam_rets = tdlam_rets[mb_idxs]
                 
-            # optional: progress bar
-            for i in range(0, meta_episodes_per_policy_update, meta_episodes_per_learner_batch):
-            # for i in range(0, meta_episodes_per_policy_update, meta_episodes_per_learner_batch):
-                mb_idxs = idxs[i:i+meta_episodes_per_learner_batch]
-                mb_meta_eps = [meta_episodes[idx] for idx in mb_idxs]
+                # Compute losses on this batch
                 losses = compute_losses(
-                    meta_episodes=mb_meta_eps,
+                    obs=mb_obs,
+                    acs=mb_acs,
+                    rews=mb_rews,
+                    dones=mb_dones,
+                    logpacs_old=mb_logpacs,
+                    advs=mb_advs,
+                    tdlam_rets=mb_tdlam_rets,
                     policy_net=policy_net,
                     value_net=value_net,
                     clip_param=ppo_clip_param,
-                    ent_coef=ppo_ent_coef)
+                    ent_coef=ppo_ent_coef
+                )
 
+                # Backprop: Policy
                 policy_optimizer.zero_grad()
                 losses['policy_loss'].backward()
-                sync_grads(model=policy_net, comm=comm)
+                sync_grads(model=policy_net, comm=comm)  # if MPI or DDP
                 policy_optimizer.step()
                 if policy_scheduler:
                     policy_scheduler.step()
 
+                # Backprop: Value
                 value_optimizer.zero_grad()
                 losses['value_loss'].backward()
                 sync_grads(model=value_net, comm=comm)
                 value_optimizer.step()
                 if value_scheduler:
                     value_scheduler.step()
-                    
+
                 if comm.Get_rank() == ROOT_RANK and show_pbar:
                     weight_pbar.update(1)
 
-            
             if comm.Get_rank() == ROOT_RANK and show_pbar:
                 weight_pbar.close()
-            
-            # logging
+
+            # Logging final losses from last minibatch
             global_losses = {}
             for name in losses:
                 loss_sum = comm.allreduce(losses[name], op=MPI.SUM)
@@ -351,6 +430,7 @@ def training_loop(
             logging.info("-" * 100)
             print("-" * 100)
             print(f"mean meta-episode return: {np.mean(meta_ep_returns):>0.3f}")
+            print("mean episode length: ", total_timesteps/episode_count)
             print("-" * 100)
             policy_checkpoint_fn(pol_iter + 1)
             value_checkpoint_fn(pol_iter + 1)

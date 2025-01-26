@@ -58,18 +58,18 @@ def create_argparser():
     parser.add_argument("--checkpoint_dir", type=str, default='checkpoints_fixed')
 
     ### Training
-    parser.add_argument("--max_pol_iters", type=int, default=80)
-    parser.add_argument("--meta_episodes_per_policy_update", type=int, default=100,
+    parser.add_argument("--max_pol_iters", type=int, default=2000) # like vanilla lander
+    parser.add_argument("--meta_episodes_per_policy_update", type=int, default=-1,
                         help="If -1, quantity is determined using a formula")
-    parser.add_argument("--meta_episodes_per_learner_batch", type=int, default=12)
+    parser.add_argument("--meta_episodes_per_learner_batch", type=int, default=2) #  vanilla PPO = 64 timesteps
     parser.add_argument("--ppo_opt_epochs", type=int, default=10)
     
-    parser.add_argument("--ppo_clip_param", type=float, default=0.10)
-    parser.add_argument("--ppo_ent_coef", type=float, default=0.01)
+    parser.add_argument("--ppo_clip_param", type=float, default=0.2) # like vanilla lander
+    parser.add_argument("--ppo_ent_coef", type=float, default=0.0) # like vanilla lander
     parser.add_argument("--discount_gamma", type=float, default=0.99)
-    parser.add_argument("--gae_lambda", type=float, default=0.3)
+    parser.add_argument("--gae_lambda", type=float, default=0.95) # like vanilla lander
     parser.add_argument("--standardize_advs", type=int, choices=[0,1], default=0)
-    parser.add_argument("--adam_lr", type=float, default=2e-3)
+    parser.add_argument("--adam_lr", type=float, default=3e-4)
     parser.add_argument("--adam_eps", type=float, default=1e-5)
     parser.add_argument("--adam_wd", type=float, default=0.01)
     return parser
@@ -288,7 +288,7 @@ def main():
 
     # run it!
     if args.meta_episodes_per_policy_update == -1:
-        numer = 5000 # timesteps per policy update
+        numer = 2048 # timesteps per policy update
         denom = comm.Get_size() * args.meta_episode_len
         meta_episodes_per_policy_update = numer // denom
     else:

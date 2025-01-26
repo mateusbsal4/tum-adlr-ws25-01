@@ -844,8 +844,8 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         # truncation=False as the time limit is handled by the `TimeLimit` wrapper added during `make`
         
         #debugging rewards
-        logging.info(f"x_reward: {-100 * np.sqrt(state[0] * state[0] + state[1] * state[1])}, y_reward: {- 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])}, \
-              calculated reward: {shaping}, actual reward: {reward}")
+        # logging.info(f"x_reward: {-100 * np.sqrt(state[0] * state[0] + state[1] * state[1])}, y_reward: {- 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])}, \
+        #       calculated reward: {shaping}, actual reward: {reward}")
         
         
         return np.array(state, dtype=np.float32), reward, terminated, False, {}

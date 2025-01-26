@@ -12,24 +12,34 @@ from rl2.agents.integration.value_net import StatefulValueNet
 
 
 class MetaEpisode:
-    def __init__(self, num_timesteps, dummy_obs):
-        self.horizon = num_timesteps
-        self.obs = np.array([dummy_obs for _ in range(self.horizon)])
-        self.acs = np.zeros(self.horizon, 'int64')
-        self.rews = np.zeros(self.horizon, 'float32')
-        self.dones = np.zeros(self.horizon, 'float32')
-        self.logpacs = np.zeros(self.horizon, 'float32')
-        self.vpreds = np.zeros(self.horizon, 'float32')
-        self.advs = np.zeros(self.horizon, 'float32')
-        self.tdlam_rets = np.zeros(self.horizon, 'float32')
-
+    def __init__(self, dummy_obs):
+        self.obs = []
+        self.acs = []
+        self.rews = []
+        self.dones = []
+        self.logpacs = []
+        self.vpreds = []
+        self.advs = []
+        self.tdlam_rets = []
+        self.timestep = 0
+        
+    def finalize(self):
+        self.obs = np.array(self.obs, dtype=np.float32)
+        self.acs = np.array(self.acs, dtype=np.int64)
+        self.rews = np.array(self.rews, dtype=np.float32)
+        self.dones = np.array(self.dones, dtype=np.float32)
+        self.logpacs = np.array(self.logpacs, dtype=np.float32)
+        self.vpreds = np.array(self.vpreds, dtype=np.float32)
+        self.advs = np.zeros(self.timestep, dtype=np.float32)
+        self.tdlam_rets = np.zeros(self.timestep, dtype=np.float32)
+        
+        # print("obs:", np.shape(self.obs), "acs:", np.shape(self.acs), "rews:", np.shape(self.rews), "dones:", np.shape(self.dones), "logpacs:", np.shape(self.logpacs), "vpreds:", np.shape(self.vpreds))
 
 @tc.no_grad()
 def generate_meta_episode(
         env: MetaEpisodicEnv,
         policy_net: StatefulPolicyNet,
         value_net: StatefulValueNet,
-        meta_episode_len: int
     ) -> MetaEpisode:
     """
     Generates a meta-episode: a sequence of episodes concatenated together,
@@ -49,21 +59,18 @@ def generate_meta_episode(
     # env.new_env()
     obs0 = env.reset()
     meta_episode = MetaEpisode(
-        num_timesteps=meta_episode_len,
         dummy_obs=obs0)
 
     o_t = np.array([obs0])
     done_t = False
-    t = 0
+    meta_episode.timestep = 0
     a_tm1 = np.array([0])
     r_tm1 = np.array([0.0])
     d_tm1 = np.array([1.0])
     h_tm1_policy_net = policy_net.initial_state(batch_size=1)
     h_tm1_value_net = value_net.initial_state(batch_size=1)
     
-    # print("before loop: \ndone:", done_t)
-    # print("observe: ", o_t, ", reset: ", env.reset())
-
+    
     # for t in range(0, meta_episode_len):
     while not done_t:
         pi_dist_t, h_t_policy_net = policy_net(
@@ -84,39 +91,33 @@ def generate_meta_episode(
         log_prob_a_t = pi_dist_t.log_prob(a_t)
         
         o_tp1, r_t, done_t, _ = env.step(a_t.squeeze(0).detach().numpy().item())
-        done_t = done_t or (t == meta_episode_len-1)
+        done_t = done_t or (meta_episode.timestep == 1000-1)
         
-        if t==meta_episode_len-1:
-            if r_t != 0:
-                r_t = -100
-            
+        if meta_episode.timestep==1000-1 and r_t != 0:
+            r_t = -100
         
+        
+        meta_episode.obs.append(o_t[0])
+        meta_episode.acs.append(a_t.squeeze(0).detach().numpy())
+        meta_episode.rews.append(r_t)
+        meta_episode.dones.append(float(done_t))
+        meta_episode.logpacs.append(log_prob_a_t.squeeze(0).detach().numpy())
+        meta_episode.vpreds.append(vpred_t.squeeze(0).detach().numpy())
 
-        meta_episode.obs[t] = o_t[0]
-        meta_episode.acs[t] = a_t.squeeze(0).detach().numpy()
-        meta_episode.rews[t] = r_t
-        
-        meta_episode.dones[t] = float(done_t)
-        
-        meta_episode.logpacs[t] = log_prob_a_t.squeeze(0).detach().numpy()
-        meta_episode.vpreds[t] = vpred_t.squeeze(0).detach().numpy()
 
         o_t = np.array([o_tp1])
-        a_tm1 = np.array([meta_episode.acs[t]])
-        r_tm1 = np.array([meta_episode.rews[t]])
-        d_tm1 = np.array([meta_episode.dones[t]])
+        a_tm1 = np.array([meta_episode.acs[meta_episode.timestep]])
+        r_tm1 = np.array([meta_episode.rews[meta_episode.timestep]])
+        d_tm1 = np.array([meta_episode.dones[meta_episode.timestep]])
         h_tm1_policy_net = h_t_policy_net
         h_tm1_value_net = h_t_value_net
-        t += 1
+        meta_episode.timestep += 1
         
-        # print("timestep: ", t)
-    #     print("reward: ", r_t)
-    #     print(done_t)
-    
     
     # print(f"mean ep return: {np.mean(meta_episode.rews)}, summed ep return: {np.sum(meta_episode.rews)}")
     # print("after loop: ", done_t)
     
+    meta_episode.finalize()
     return meta_episode
 
 

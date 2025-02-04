@@ -36,6 +36,9 @@ class LunarLanderPreprocessing(Preprocessing):
             tc.FloatTensor of shape [B, ..., 8 + A + 2]; concatenated state, action, reward, and done.
         """
         
+        print("\nDEBUG - Preprocessing:")
+        print(f"curr_obs range: {curr_obs.min().item():.3f} to {curr_obs.max().item():.3f}")
+        
         return curr_obs
         
         # # Convert previous action to float and add an extra dimension

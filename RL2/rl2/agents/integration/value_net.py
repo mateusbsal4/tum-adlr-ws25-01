@@ -46,11 +46,16 @@ class StatefulValueNet(tc.nn.Module, Generic[ArchitectureState]):
             Tuple containing value estimate(s) with batch shape [B, ...]
                and the architecture's new state.
         """
+        print("\nDEBUG - StatefulValueNet:")
+        print(f"curr_obs range: {curr_obs.min().item():.3f} to {curr_obs.max().item():.3f}")
+        
         inputs = self._preprocessing(
             curr_obs, prev_action, prev_reward, prev_done)
+        print(f"After preprocessing range: {inputs.min().item():.3f} to {inputs.max().item():.3f}")
 
         features, new_state = self._architecture(
             inputs=inputs, prev_state=prev_state)
+        print(f"After architecture range: {features.min().item():.3f} to {features.max().item():.3f}")
 
         vpred = self._value_head(features)
 

@@ -45,9 +45,16 @@ class LinearPolicyHead(tc.nn.Module):
         Returns:
             tc.distributions.Categorical over actions, with batch shape [B, ...]
         """
+        print("\nDEBUG - Policy Head:")
+        print(f"Input features range: {features.min().item():.3f} to {features.max().item():.3f}")
+        
         logits = self._net(features)
+        print(f"Raw logits range: {logits.min().item():.3f} to {logits.max().item():.3f}")
+        
         # Add numerical stability
-        logits = tc.clamp(logits, -20.0, 20.0)  # Prevent extreme values
+        logits = tc.clamp(logits, -20.0, 20.0)
+        print(f"Clamped logits range: {logits.min().item():.3f} to {logits.max().item():.3f}")
+        
         return tc.distributions.Categorical(logits=logits)
 
 

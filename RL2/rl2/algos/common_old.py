@@ -12,26 +12,16 @@ from rl2.agents.integration.value_net import StatefulValueNet
 
 
 class MetaEpisode:
-    def __init__(self, dummy_obs):
-        self.obs = []
-        self.acs = []
-        self.rews = []
-        self.dones = []
-        self.logpacs = []
-        self.vpreds = []
-        self.advs = []
-        self.tdlam_rets = []
-        self.timestep = 0
-        
-    def finalize(self):
-        self.obs = np.array(self.obs, dtype=np.float32)
-        self.acs = np.array(self.acs, dtype=np.int64)
-        self.rews = np.array(self.rews, dtype=np.float32)
-        self.dones = np.array(self.dones, dtype=np.float32)
-        self.logpacs = np.array(self.logpacs, dtype=np.float32)
-        self.vpreds = np.array(self.vpreds, dtype=np.float32)
-        self.advs = np.zeros(self.timestep, dtype=np.float32)
-        self.tdlam_rets = np.zeros(self.timestep, dtype=np.float32)
+    def __init__(self, num_timesteps, dummy_obs):
+        self.horizon = num_timesteps
+        self.obs = np.array([dummy_obs for _ in range(self.horizon)])
+        self.acs = np.zeros(self.horizon, 'int64')
+        self.rews = np.zeros(self.horizon, 'float32')
+        self.dones = np.zeros(self.horizon, 'float32')
+        self.logpacs = np.zeros(self.horizon, 'float32')
+        self.vpreds = np.zeros(self.horizon, 'float32')
+        self.advs = np.zeros(self.horizon, 'float32')
+        self.tdlam_rets = np.zeros(self.horizon, 'float32')
 
 
 @tc.no_grad()
@@ -49,23 +39,32 @@ def generate_meta_episode(
         env: environment.
         policy_net: policy network.
         value_net: value network.
+        meta_episode_len: timesteps per meta-episode.
 
     Returns:
         meta_episode: an instance of the meta-episode class.
     """
 
+    # env.new_env()
     obs0 = env.reset()
-    meta_episode = MetaEpisode(dummy_obs=obs0)
+    meta_episode_len = 1000
+    meta_episode = MetaEpisode(
+        num_timesteps=meta_episode_len,
+        dummy_obs=obs0)
 
     o_t = np.array([obs0])
     done_t = False
-    meta_episode.timestep = 0
+    t = 0
     a_tm1 = np.array([0])
     r_tm1 = np.array([0.0])
     d_tm1 = np.array([1.0])
     h_tm1_policy_net = policy_net.initial_state(batch_size=1)
     h_tm1_value_net = value_net.initial_state(batch_size=1)
     
+    # print("before loop: \ndone:", done_t)
+    # print("observe: ", o_t, ", reset: ", env.reset())
+
+    # for t in range(0, meta_episode_len):
     while not done_t:
         pi_dist_t, h_t_policy_net = policy_net(
             curr_obs=tc.FloatTensor(o_t),
@@ -85,27 +84,40 @@ def generate_meta_episode(
         log_prob_a_t = pi_dist_t.log_prob(a_t)
         
         o_tp1, r_t, done_t, _ = env.step(a_t.squeeze(0).detach().numpy().item())
-        done_t = done_t or (meta_episode.timestep == 1000-1)
+        done_t = done_t or (t == meta_episode_len-1)
         
-        if meta_episode.timestep == 1000-1 and r_t != 0:
-            r_t = -100
+        if t==meta_episode_len-1:
+            if r_t != 0:
+                r_t = -100
+            
         
-        meta_episode.obs.append(o_t[0])
-        meta_episode.acs.append(a_t.squeeze(0).detach().numpy())
-        meta_episode.rews.append(r_t)
-        meta_episode.dones.append(float(done_t))
-        meta_episode.logpacs.append(log_prob_a_t.squeeze(0).detach().numpy())
-        meta_episode.vpreds.append(vpred_t.squeeze(0).detach().numpy())
+
+        meta_episode.obs[t] = o_t[0]
+        meta_episode.acs[t] = a_t.squeeze(0).detach().numpy()
+        meta_episode.rews[t] = r_t
+        
+        meta_episode.dones[t] = float(done_t)
+        
+        meta_episode.logpacs[t] = log_prob_a_t.squeeze(0).detach().numpy()
+        meta_episode.vpreds[t] = vpred_t.squeeze(0).detach().numpy()
 
         o_t = np.array([o_tp1])
-        a_tm1 = np.array([meta_episode.acs[meta_episode.timestep]])
-        r_tm1 = np.array([meta_episode.rews[meta_episode.timestep]])
-        d_tm1 = np.array([meta_episode.dones[meta_episode.timestep]])
+        a_tm1 = np.array([meta_episode.acs[t]])
+        r_tm1 = np.array([meta_episode.rews[t]])
+        d_tm1 = np.array([meta_episode.dones[t]])
         h_tm1_policy_net = h_t_policy_net
         h_tm1_value_net = h_t_value_net
-        meta_episode.timestep += 1
+        t += 1
+        
+        # print("timestep: ", t)
+    #     print("reward: ", r_t)
+    #     print(done_t)
     
-    meta_episode.finalize()
+    
+    # print(f"mean ep return: {np.mean(meta_episode.rews)}, summed ep return: {np.sum(meta_episode.rews)}")
+    # print("after loop: ", done_t)
+    print("obs:", np.shape(meta_episode.obs), "acs:", np.shape(meta_episode.acs), "rews:", np.shape(meta_episode.rews), "dones:", np.shape(meta_episode.dones), "logpacs:", np.shape(meta_episode.logpacs), "vpreds:", np.shape(meta_episode.vpreds))
+
     return meta_episode
 
 
@@ -113,8 +125,7 @@ def generate_meta_episode(
 def assign_credit(
         meta_episode: MetaEpisode,
         gamma: float,
-        lam: float,
-        standardize_advs: bool = True
+        lam: float
     ) -> MetaEpisode:
     """
     Compute td lambda returns and generalized advantage estimates.
@@ -127,43 +138,32 @@ def assign_credit(
         meta_episode: meta-episode.
         gamma: discount factor.
         lam: GAE decay parameter.
-        standardize_advs: whether to standardize advantages
 
     Returns:
         meta_episode: an instance of the meta-episode class,
         with generalized advantage estimates and td lambda returns computed.
     """
     T = len(meta_episode.acs)
-    last_gae_lam = 0
-    
-    for t in reversed(range(T)):
+    for t in reversed(range(0, T)):  # T-1, ..., 0.
         r_t = meta_episode.rews[t]
         V_t = meta_episode.vpreds[t]
-        V_tp1 = meta_episode.vpreds[t + 1] if t + 1 < T else 0.0
-        
-        # Calculate TD error
-        delta_t = r_t + gamma * V_tp1 - V_t
-        
-        # GAE calculation
-        last_gae_lam = delta_t + gamma * lam * last_gae_lam * (1 - meta_episode.dones[t])
-        meta_episode.advs[t] = last_gae_lam
+        V_tp1 = meta_episode.vpreds[t+1] if t+1 < T else 0.0
+        A_tp1 = meta_episode.advs[t+1] if t+1 < T else 0.0
+        delta_t = -V_t + r_t + gamma * V_tp1
+        A_t = delta_t + gamma * lam * A_tp1
+        meta_episode.advs[t] = A_t
 
-    # Standardize advantages only once, at the GAE level
-    if standardize_advs:
-        meta_episode.advs = (meta_episode.advs - meta_episode.advs.mean()) / (meta_episode.advs.std() + 1e-8)
-    
-    # Calculate returns
-    meta_episode.tdlam_rets = meta_episode.advs + meta_episode.vpreds
+    meta_episode.tdlam_rets = meta_episode.vpreds + meta_episode.advs
     return meta_episode
 
 
 def huber_func(y_pred, y_true, delta=1.0):
-    a = y_pred - y_true
+    a = y_pred-y_true
     a_abs = tc.abs(a)
     a2 = tc.square(a)
     terms = tc.where(
-        a_abs < delta,
+        tc.less(a_abs, delta * tc.ones_like(a2)),
         0.5 * a2,
         delta * (a_abs - 0.5 * delta)
     )
-    return terms.mean()  # Ensure the mean is taken over the terms
+    return terms

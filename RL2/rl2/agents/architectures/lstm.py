@@ -91,7 +91,9 @@ class LSTM(tc.nn.Module):
             f = tc.nn.Sigmoid()(f + self._forget_bias)
             i = tc.nn.Sigmoid()(i)
             o = tc.nn.Sigmoid()(o)
-            j = tc.nn.ReLU()(j)
+            # j = tc.nn.ReLU()(j)
+            j = tc.tanh(j)
+
             c_new = f * c_prev + i * j
             h_new = o * c_new
 

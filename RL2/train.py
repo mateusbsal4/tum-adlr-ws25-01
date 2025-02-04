@@ -6,6 +6,7 @@ import argparse
 from functools import partial
 import logging
 import os
+import wandb  # Add this import
 #from render_browser import render_browser
 import torch as tc
 import numpy as np
@@ -38,9 +39,9 @@ def create_argparser():
     ### Environment
     parser.add_argument("--environment", choices=['lander', 'bandit', 'tabular_mdp'],
                         default='lander')
-    parser.add_argument("--num_states", type=int, default=10,
+    parser.add_argument("--num_states", type=int, default=8,
                         help="Ignored if environment is bandit.")
-    parser.add_argument("--num_actions", type=int, default=4) 
+    parser.add_argument("--num_actions", type=int, default=4)
     parser.add_argument("--max_episode_len", type=int, default=1_000,  # apparently completely irrelevant (not used anywhere)
                         help="Timesteps before automatic episode reset. " +
                              "Ignored if environment is bandit.")
@@ -50,28 +51,32 @@ def create_argparser():
     ### Architecture
     parser.add_argument(
         "--architecture", choices=['gru', 'lstm', 'snail', 'transformer'],
-        default='gru')
-    parser.add_argument("--num_features", type=int, default=256)
+        default='lstm')
+    parser.add_argument("--num_features", type=int, default=128) # num of features in the hidden layer
 
     ### Checkpointing
     parser.add_argument("--model_name", type=str, default='defaults')
-    parser.add_argument("--checkpoint_dir", type=str, default='checkpoints_fixed')
+    parser.add_argument("--checkpoint_dir", type=str, default='checkpoints')
 
     ### Training
-    parser.add_argument("--max_pol_iters", type=int, default=2000) # like vanilla lander
-    parser.add_argument("--meta_episodes_per_policy_update", type=int, default=-1,
+    parser.add_argument("--max_pol_iters", type=int, default=5000) # like vanilla lander
+    parser.add_argument("--timesteps_per_pol_update", type=int, default=2048,
                         help="If -1, quantity is determined using a formula")
-    parser.add_argument("--meta_episodes_per_learner_batch", type=int, default=2) #  vanilla PPO = 64 timesteps
-    parser.add_argument("--ppo_opt_epochs", type=int, default=10)
+    parser.add_argument("--timesteps_per_learner_batch", type=int, default=64) #  vanilla PPO = 64 timesteps
+    parser.add_argument("--ppo_opt_epochs", type=int, default=5)
     
-    parser.add_argument("--ppo_clip_param", type=float, default=0.2) # like vanilla lander
-    parser.add_argument("--ppo_ent_coef", type=float, default=0.0) # like vanilla lander
+    parser.add_argument("--ppo_clip_param", type=float, default=0.2)
+    parser.add_argument("--ppo_ent_coef", type=float, default=0.01) #adjusted for LSTM
     parser.add_argument("--discount_gamma", type=float, default=0.99)
     parser.add_argument("--gae_lambda", type=float, default=0.95) # like vanilla lander
-    parser.add_argument("--standardize_advs", type=int, choices=[0,1], default=0)
-    parser.add_argument("--adam_lr", type=float, default=3e-4)
+    parser.add_argument("--standardize_advs", type=int, choices=[0,1], default=1) # adjusted for LSTM
+    parser.add_argument("--adam_lr", type=float, default=1e-4)
     parser.add_argument("--adam_eps", type=float, default=1e-5)
     parser.add_argument("--adam_wd", type=float, default=0.01)
+    parser.add_argument("--value_lr", type=float, default=5e-5)
+    parser.add_argument("--wandb_project", type=str, default='rl2_project')  # Add this line
+    parser.add_argument("--wandb_entity", type=str, default='')  # Add this line
+    parser.add_argument("--value_loss_threshold", type=float, default=1_000, help="Threshold for value loss to abort the run")  # Add this line
     return parser
 
 
@@ -180,6 +185,9 @@ def main():
     args = create_argparser().parse_args()
     comm = get_comm()
 
+    # Initialize wandb
+    # wandb.init(project=args.wandb_project, entity=args.wandb_entity)  # Add this line
+
     # logging --------
     log_directory = os.path.join(args.checkpoint_dir,"logs")
     os.makedirs(log_directory, exist_ok=True)
@@ -224,11 +232,29 @@ def main():
         eps=args.adam_eps)
     value_optimizer = tc.optim.AdamW(
         get_weight_decay_param_groups(value_net, args.adam_wd),
-        lr=args.adam_lr,
+        lr=args.value_lr,  # Use value_lr here
         eps=args.adam_eps)
 
-    policy_scheduler = None
-    value_scheduler = None
+    # Add learning rate schedulers
+    policy_scheduler = tc.optim.lr_scheduler.ReduceLROnPlateau(
+        policy_optimizer, 
+        mode='max',  # We want to maximize reward
+        factor=0.5,  # Reduce LR by half when plateauing
+        patience=5,
+        verbose=True,
+        threshold=1.0,  # Minimum change in the monitored quantity to qualify as an improvement
+        threshold_mode='rel'  # The threshold is relative to best value
+    )
+    
+    value_scheduler = tc.optim.lr_scheduler.ReduceLROnPlateau(
+        value_optimizer,
+        mode='min',  # We want to minimize value loss
+        factor=0.5,
+        patience=3,
+        verbose=True,
+        threshold=0.01,  # Minimum change in the monitored quantity to qualify as an improvement
+        threshold_mode='rel'  # The threshold is relative to best value
+    )
 
     # load checkpoint, if applicable.
     pol_iters_so_far = 0
@@ -287,12 +313,12 @@ def main():
         scheduler=value_scheduler)
 
     # run it!
-    if args.meta_episodes_per_policy_update == -1:
+    if args.timesteps_per_pol_update == -1:
         numer = 2048 # timesteps per policy update
         denom = comm.Get_size() * args.meta_episode_len
-        meta_episodes_per_policy_update = numer // denom
+        timesteps_per_pol_update = numer // denom
     else:
-        meta_episodes_per_policy_update = args.meta_episodes_per_policy_update // comm.Get_size()
+        timesteps_per_pol_update = args.timesteps_per_pol_update // comm.Get_size()
 
     
     training_loop(
@@ -303,8 +329,8 @@ def main():
         value_optimizer=value_optimizer,
         policy_scheduler=policy_scheduler,
         value_scheduler=value_scheduler,
-        meta_episodes_per_policy_update=meta_episodes_per_policy_update,
-        meta_episodes_per_learner_batch=args.meta_episodes_per_learner_batch,
+        timesteps_per_pol_update=timesteps_per_pol_update,
+        timesteps_per_learner_batch=args.timesteps_per_learner_batch,
         meta_episode_len=args.meta_episode_len,
         ppo_opt_epochs=args.ppo_opt_epochs,
         ppo_clip_param=args.ppo_clip_param,
@@ -316,12 +342,13 @@ def main():
         pol_iters_so_far=pol_iters_so_far,
         policy_checkpoint_fn=policy_checkpoint_fn,
         value_checkpoint_fn=value_checkpoint_fn,
-        comm=comm)
+        checkpoint_dir=args.checkpoint_dir,
+        comm=comm,
+        value_loss_threshold=args.value_loss_threshold  # Add this line
+    )
     
-
-
+    print("Training Ended!")
     logging.info("Training Ended!")
 
 if __name__ == '__main__':
-
     main()

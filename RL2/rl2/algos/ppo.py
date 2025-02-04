@@ -9,6 +9,7 @@ from collections import deque
 import logging
 import csv
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 import torch as tc
 import numpy as np
@@ -25,89 +26,105 @@ from rl2.algos.common import (
 )
 from rl2.utils.comm_util import sync_grads
 from rl2.utils.constants import ROOT_RANK
+from datetime import datetime
+# import wandb  # Add this import
 
 
 
 def compute_losses(
-        obs: np.ndarray,
-        acs: np.ndarray,
-        rews: np.ndarray,
-        dones: np.ndarray,
-        logpacs_old: np.ndarray,
-        advs: np.ndarray,
-        tdlam_rets: np.ndarray,
-        policy_net: StatefulPolicyNet,
-        value_net: StatefulValueNet,
-        clip_param: float,
-        ent_coef: float
+    obs: np.ndarray,
+    acs: np.ndarray,
+    rews: np.ndarray,
+    dones: np.ndarray,
+    logpacs_old: np.ndarray,
+    advs: np.ndarray,
+    tdlam_rets: np.ndarray,
+    policy_net: StatefulPolicyNet,
+    value_net: StatefulValueNet,
+    clip_param: float,
+    ent_coef: float,
+    standardize_advs: bool
     ):
-        """
-        Computes PPO losses given flattened arrays for timesteps.
+    """
+    Computes PPO losses given flattened arrays for timesteps.
 
-        obs: shape [N, obs_dim]
-        acs, rews, dones, logpacs_old, advs, tdlam_rets: shape [N]
-        """
+    obs: shape [N, obs_dim]
+    acs, rews, dones, logpacs_old, advs, tdlam_rets: shape [N]
+    """
 
-        # Convert to tensors
-        B = len(rews)
-        t_obs = tc.FloatTensor(obs)                   # [N, obs_dim]
-        t_acs = tc.LongTensor(acs)                    # [N]
-        t_rews = tc.FloatTensor(rews)                 # [N]
-        t_dones = tc.FloatTensor(dones)               # [N]
-        t_logpacs_old = tc.FloatTensor(logpacs_old)   # [N]
-        t_advs = tc.FloatTensor(advs)                 # [N]
-        t_tdlam_rets = tc.FloatTensor(tdlam_rets)     # [N]
-        prev_state_policy_net = policy_net.initial_state(batch_size=B)
-        prev_state_value_net = value_net.initial_state(batch_size=B)
+    # Convert to tensors
+    B = len(rews)
+    t_obs = tc.FloatTensor(obs)                   # [N, obs_dim]
+    t_acs = tc.LongTensor(acs)                    # [N]
+    t_rews = tc.FloatTensor(rews)                 # [N]
+    t_dones = tc.FloatTensor(dones)               # [N]
+    t_logpacs_old = tc.FloatTensor(logpacs_old)   # [N]
+    t_advs = tc.FloatTensor(advs)                 # [N]
+    t_tdlam_rets = tc.FloatTensor(tdlam_rets)     # [N]
+    prev_state_policy_net = policy_net.initial_state(batch_size=B)
+    prev_state_value_net = value_net.initial_state(batch_size=B)
 
-        # Forward through feed-forward policy & value
-        pi_dists, _ = policy_net(
-            curr_obs=t_obs,
-            prev_action=t_acs,
-            prev_reward=t_rews,
-            prev_done=t_dones,
-            prev_state=prev_state_policy_net) # distribution over actions, shape [N, ...]
-        
-        vpreds, _ = value_net(
-            curr_obs=t_obs,
-            prev_action=t_acs,
-            prev_reward=t_rews,
-                prev_done=t_dones,
-            prev_state=prev_state_value_net)          # predicted values, shape [N]
-        # If your nets are originally RNN-based, you'd need to handle sequence states carefully.
+    # Forward through feed-forward policy & value
+    pi_dists, _ = policy_net(
+        curr_obs=t_obs,
+        prev_action=t_acs,
+        prev_reward=t_rews,
+        prev_done=t_dones,
+        prev_state=prev_state_policy_net) # distribution over actions, shape [N, ...]
+    
+    vpreds, _ = value_net(
+        curr_obs=t_obs,
+        prev_action=t_acs,
+        prev_reward=t_rews,
+        prev_done=t_dones,
+        prev_state=prev_state_value_net)          # predicted values, shape [N]
+    # If your nets are originally RNN-based, you'd need to handle sequence states carefully.
 
-        # Entropy
-        entropies = pi_dists.entropy()     # shape [N]
-        vpreds_new = vpreds
-        
-        meanent = entropies.mean()
-        policy_entropy_bonus = ent_coef * meanent
+    # Entropy
+    entropies = pi_dists.entropy()     # shape [N]
+    vpreds_new = vpreds
+    
+    meanent = entropies.mean()
+    policy_entropy_bonus = ent_coef * meanent
 
-        # New logp
-        logpacs_new = pi_dists.log_prob(t_acs)  # shape [N]
-        
-        # PPO ratio
-        policy_ratios = tc.exp(logpacs_new - t_logpacs_old)
-        clipped_ratios = tc.clip(policy_ratios, 1 - clip_param, 1 + clip_param)
-        surr1 = t_advs * policy_ratios
-        surr2 = t_advs * clipped_ratios
-        policy_surrogate_objective = tc.mean(tc.min(surr1, surr2))
-        
-        # composite policy loss
-        policy_loss = -(policy_surrogate_objective + policy_entropy_bonus)
+    # New logp
+    logpacs_new = pi_dists.log_prob(t_acs)  # shape [N]
+    
+    # PPO ratio with clipping for numerical stability
+    ratio = tc.exp(tc.clamp(logpacs_new - t_logpacs_old, -20, 20))
+    surr1 = ratio * t_advs
+    surr2 = tc.clamp(ratio, 1.0 - clip_param, 1.0 + clip_param) * t_advs
+    
+    # Policy loss with additional clipping
+    policy_surrogate_objective = tc.mean(tc.min(surr1, surr2))
+    policy_loss = -(tc.clamp(policy_surrogate_objective, -20.0, 20.0) + policy_entropy_bonus)
+    
+    # Value loss with normalization and clipping
+    value_pred_clipped = vpreds + tc.clamp(vpreds_new - vpreds, -clip_param, clip_param)
+    
+    # Use Huber loss for better stability
+    value_losses = huber_func(vpreds_new, t_tdlam_rets, delta=1.0)
+    value_losses_clipped = huber_func(value_pred_clipped, t_tdlam_rets, delta=1.0)
+    
+    # Take the maximum of clipped and unclipped value losses
+    value_loss = 0.5 * tc.max(value_losses, value_losses_clipped)
+    
+    # Add L2 regularization to prevent extreme values
+    l2_reg = 0.001 * sum(tc.sum(param ** 2) for param in value_net.parameters())
+    value_loss = value_loss + l2_reg
+    
+    # Clip the final value loss
+    value_loss = tc.clamp(value_loss, 0, 100.0)
+    
+    # clipfrac
+    clipfrac = tc.mean(tc.greater(surr1, surr2).float())
 
-        # value loss
-        value_loss = tc.mean(huber_func(t_tdlam_rets, vpreds_new))
-
-        # clipfrac
-        clipfrac = tc.mean(tc.greater(surr1, surr2).float())
-
-        return {
-            "policy_loss": policy_loss,
-            "value_loss": value_loss,
-            "meanent": meanent,
-            "clipfrac": clipfrac
-        }
+    return {
+        "policy_loss": policy_loss,
+        "value_loss": value_loss,
+        "meanent": meanent,
+        "clipfrac": clipfrac
+    }
 
 
 
@@ -119,8 +136,8 @@ def training_loop(
         value_optimizer: tc.optim.Optimizer,
         policy_scheduler: Optional[tc.optim.lr_scheduler._LRScheduler],  # pylint: disable=W0212
         value_scheduler: Optional[tc.optim.lr_scheduler._LRScheduler],  # pylint: disable=W0212
-        meta_episodes_per_policy_update: int,
-        meta_episodes_per_learner_batch: int,
+        timesteps_per_pol_update: int,
+        timesteps_per_learner_batch: int,
         meta_episode_len: int,
         ppo_opt_epochs: int,
         ppo_clip_param: float,
@@ -132,7 +149,9 @@ def training_loop(
         pol_iters_so_far: int,
         policy_checkpoint_fn: Callable[[int], None],
         value_checkpoint_fn: Callable[[int], None],
+        checkpoint_dir: str,
         comm: type(MPI.COMM_WORLD),
+        value_loss_threshold: float,  # Add this parameter
     ) -> None:
     """
     Train a stateful RL^2 agent via PPO to maximize discounted cumulative reward
@@ -146,9 +165,9 @@ def training_loop(
         value_optimizer: value optimizer.
         policy_scheduler: policy lr scheduler.
         value_scheduler: value lr scheduler.
-        meta_episodes_per_policy_update: meta-episodes per policy improvement,
+        timesteps_per_pol_update: meta-episodes per policy improvement,
             on each process.
-        meta_episodes_per_learner_batch: meta-episodes per batch on each process.
+        timesteps_per_learner_batch: meta-episodes per batch on each process.
         meta_episode_len: timesteps per meta-episode.
         ppo_opt_epochs: optimization epochs for proximal policy optimization.
         ppo_clip_param: clip parameter for proximal policy optimization.
@@ -161,6 +180,7 @@ def training_loop(
         policy_checkpoint_fn: a callback for saving checkpoints of policy net.
         value_checkpoint_fn: a callback for saving checkpoints of value net.
         comm: mpi comm_world communicator object.
+        value_loss_threshold: threshold for value loss to abort the run.
 
     Returns:
         None
@@ -204,36 +224,49 @@ def training_loop(
 
 
     meta_ep_returns = deque(maxlen=1000) 
-    log_directory = 'checkpoints_fixed/logs/'
-    show_pbar = True # optional: use progress bar to visualize the progress
+    log_directory = os.path.join(checkpoint_dir, 'logs')
+    os.makedirs(log_directory, exist_ok=True)
+    show_pbar = False # optional: use progress bar to visualize the progress
     
  
-    timestep = []
-    reward = []
+    policy_losses = []
+    value_losses = []
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+    # Initialize the progress bar for timesteps_till_now
+    if comm.Get_rank() == ROOT_RANK and show_pbar:
+        total_timesteps_pbar = tqdm(total=max_pol_iters * 2048, desc="Total Timesteps", position=2, ncols=80, leave=True)
+
+    # Add moving averages for monitoring
+    reward_window = deque(maxlen=100)
+    value_loss_window = deque(maxlen=100)
+    
+    # Early stopping variables
+    best_loss = float('+inf')
+    patience = 10
+    patience_counter = 0
+    
     for pol_iter in range(pol_iters_so_far, max_pol_iters):
         # create a new environment
         env.new_env()
-        singlereward_csv_filepath = os.path.join(log_directory, f"politer{pol_iter}_reward.csv")
+        timesteps_till_now = 0
+        local_timesteps = 0
+        total_timesteps = 0
         
         # collect meta-episodes...
         meta_episodes = list()
         
-        timesteps_per_pol_update = 2048
         if comm.Get_rank() == ROOT_RANK and show_pbar:
-            episode_pbar = tqdm(total=timesteps_per_pol_update,  desc="Collecting Meta-Episodes", ncols=80)
+            episode_pbar = tqdm(total=timesteps_per_pol_update, desc="Collecting Meta-Episodes", ncols=80, position=0)
         
         successful_episodes = 0
         failed_episodes = 0
         
         local_episode_count = 0
         
-        
-        local_timesteps = 0
-        total_timesteps = 0
+
         
         while total_timesteps < timesteps_per_pol_update:
-        # for i in range(0, meta_episodes_per_policy_update): 
             
             # collect one meta-episode and append it to the list
             meta_episode = generate_meta_episode(
@@ -244,7 +277,9 @@ def training_loop(
             meta_episode = assign_credit(
                 meta_episode=meta_episode,
                 gamma=discount_gamma,
-                lam=gae_lambda)
+                lam=gae_lambda,
+                standardize_advs=standardize_advs
+            )
             meta_episodes.append(meta_episode)
             
             
@@ -254,20 +289,19 @@ def training_loop(
             
             local_episode_count += 1
             episode_count = comm.allreduce(local_episode_count, op=MPI.SUM)
+            logging.info(f"pol iter {pol_iter}, meta-episode {local_episode_count}")
             
             local_timesteps = len(rewards)
             global_timesteps = comm.allreduce(local_timesteps, op=MPI.SUM)
             total_timesteps += global_timesteps
-            # print("local: ", local_timesteps, " total timesteps: ", total_timesteps)
+            timesteps_till_now += global_timesteps
+
+            if comm.Get_rank() == ROOT_RANK and show_pbar:
+                total_timesteps_pbar.update(global_timesteps)
             
             if comm.Get_rank() == ROOT_RANK and show_pbar:
                     episode_pbar.update(global_timesteps)
 
-            
-            # flag any successful or ununsual episodes
-            if last_reward != -100:
-                print("Success after ", len(rewards)," steps, reward: ", last_reward)
-                logging.info("Success after ", len(rewards)," steps, reward: ", last_reward)
             
             # local success and failure counts
             local_successful_episodes = 1 if last_reward == 100 else 0
@@ -280,25 +314,47 @@ def training_loop(
                         
             # logging
             l_meta_ep_returns = [np.sum(meta_episode.rews)] #local meta episode return from a single worker
+            # print(episode_count, ": ", l_meta_ep_returns, "epsiode length: ", len(meta_episode.rews))
+            
+            if np.sum(meta_episode.rews) > 50:
+                print(episode_count, " episode - positive reward: ", l_meta_ep_returns, " last reward: ", last_reward)
+                
+                shaping = (
+                    -100 * np.sqrt(meta_episode.obs[:,0] * meta_episode.obs[:,0] + meta_episode.obs[:,1] * meta_episode.obs[:,1])
+                    - 100 * np.sqrt(meta_episode.obs[:,2] * meta_episode.obs[:,2] + meta_episode.obs[:,3] * meta_episode.obs[:,3])
+                    - 100 * abs(meta_episode.obs[:,4])
+                    + 10 * meta_episode.obs[:,6]
+                    + 10 * meta_episode.obs[:,7]
+                ) 
+                
+                plt.figure(figsize=(10, 6))
+                plt.plot(-100 * np.sqrt(meta_episode.obs[:,0]**2 + meta_episode.obs[:,1]**2), linestyle='-', label='pos_reward')
+                plt.plot(-100 * np.sqrt(meta_episode.obs[:,2]**2 + meta_episode.obs[:,3]**2), linestyle='-', label='vel_reward')
+                plt.plot(-100 * abs(meta_episode.obs[:,4]), linestyle='-', label='angle_reward')
+                plt.plot(10 * meta_episode.obs[:,5], linestyle='-', label='leg1_reward')
+                plt.plot(10 * meta_episode.obs[:,6], linestyle='-', label='leg2_reward')
+                plt.plot(shaping, linestyle='-', label='calculated_reward')
+                plt.plot(meta_episode.rews, linestyle='-', label='Total Reward')
+                plt.plot(meta_episode.acs, linestyle='-', label='Actions')
+                plt.title(f'Episode {episode_count} - Rewards (Sum: {np.sum(meta_episode.rews):.2f}) within {len(meta_episode.rews)} steps)')
+                plt.xlabel('Reward Index')
+                plt.ylabel('Reward Value')
+                plt.legend()
+                plt.grid(True)
+                filename = os.path.join(log_directory, f'pol_{pol_iter}_ep_{episode_count}_rewcomps_{timestamp}.png')
+                plt.savefig(filename)
+                plt.close()
+                
+            
             g_meta_ep_returns = comm.allgather(l_meta_ep_returns) # global meta episode return from all workers
             g_meta_ep_returns = [x for loc in g_meta_ep_returns for x in loc]
             meta_ep_returns.extend(g_meta_ep_returns) # all the rewards from different works in a list
             
-            #save to csv 
-            # timestep.append(i)
-            # reward.append(meta_ep_returns)
-                
-            # with open(singlereward_csv_filepath, mode='w', newline='') as csv_file:
-            #     writer = csv.writer(csv_file)
-            #     writer.writerow(['Episode', 'Reward'])  # Header
-            #     for i in range(len(timestep)):
-            #         #save to csv
-            #         writer.writerow([timestep[i], reward[i]])
             
         print("\nfinished collecting after ", total_timesteps, " timesteps")
         
-        if show_pbar:
-            print(f"pol iter {pol_iter}: {successful_episodes} successes, {failed_episodes} failures, out of {episode_count} episodes")
+
+        print(f"pol iter {pol_iter}: {successful_episodes} successes, {failed_episodes} failures, out of {episode_count} episodes")
 
                 
         if comm.Get_rank() == ROOT_RANK and show_pbar:
@@ -309,25 +365,34 @@ def training_loop(
             num_procs = comm.Get_size()
             adv_eps = 1e-8
 
-            l_advs = list(map(lambda m: m.advs, meta_episodes))
-            l_adv_mu = np.mean(l_advs)
+            # Flatten all advantages
+            all_advs = np.concatenate([m.advs for m in meta_episodes])
+
+            # Compute global mean and std
+            l_adv_mu = np.mean(all_advs)
             g_adv_mu = comm.allreduce(l_adv_mu, op=MPI.SUM) / num_procs
 
-            l_advs_centered = list(map(lambda adv: adv - g_adv_mu, l_advs))
+            l_advs_centered = all_advs - g_adv_mu
             l_adv_sigma2 = np.var(l_advs_centered)
             g_adv_sigma2 = comm.allreduce(l_adv_sigma2, op=MPI.SUM) / num_procs
             g_adv_sigma = np.sqrt(g_adv_sigma2) + adv_eps
 
-            l_advs_standardized = list(map(lambda adv: adv / g_adv_sigma, l_advs_centered))
-            for m, a in zip(meta_episodes, l_advs_standardized):
-                setattr(m, 'advs', a)
-                setattr(m, 'tdlam_rets', m.vpreds + a)
+            # Standardize advantages
+            all_advs_standardized = l_advs_centered / g_adv_sigma
+
+            # Split back into meta-episodes
+            start_idx = 0
+            for m in meta_episodes:
+                end_idx = start_idx + len(m.advs)
+                m.advs = all_advs_standardized[start_idx:end_idx]
+                m.tdlam_rets = m.vpreds + m.advs
+                start_idx = end_idx
 
             if comm.Get_rank() == ROOT_RANK:
-                mean_adv_r0 = np.mean(
-                    list(map(lambda m: m.advs, meta_episodes)))
+                mean_adv_r0 = np.mean(all_advs_standardized)
                 logging.info(f"Mean advantage: {mean_adv_r0}")
                 print(f"Mean advantage: {mean_adv_r0}")
+
 
         # Suppose you've just collected `meta_episodes` via generate_meta_episode, etc.
         # Flatten them into a single buffer of timesteps
@@ -348,7 +413,7 @@ def training_loop(
             # Shuffle all timesteps
             np.random.shuffle(indices)
             
-            batch_size = 64
+            batch_size = timesteps_per_learner_batch
 
             if comm.Get_rank() == ROOT_RANK:
                 logging.info(f"pol update {pol_iter}, opt_epoch: {opt_epoch}...")
@@ -384,27 +449,47 @@ def training_loop(
                     policy_net=policy_net,
                     value_net=value_net,
                     clip_param=ppo_clip_param,
-                    ent_coef=ppo_ent_coef
+                    ent_coef=ppo_ent_coef,
+                    standardize_advs=False
                 )
 
                 # Backprop: Policy
                 policy_optimizer.zero_grad()
                 losses['policy_loss'].backward()
-                sync_grads(model=policy_net, comm=comm)  # if MPI or DDP
+                sync_grads(model=policy_net, comm=comm)
+
+                # # Add gradient clipping for policy network
+                # for param in policy_net.parameters():
+                #     if param.grad is not None:
+                #         param.grad.data.clamp_(-1, 1)  # Clip gradients between -1 and 1
+
                 policy_optimizer.step()
                 if policy_scheduler:
-                    policy_scheduler.step()
+                    # Use mean reward as metric for policy scheduler
+                    policy_scheduler.step(np.mean(meta_ep_returns))
 
-                # Backprop: Value
+                # # Backprop: Value
                 value_optimizer.zero_grad()
                 losses['value_loss'].backward()
-                sync_grads(model=value_net, comm=comm)
+
+                # More aggressive gradient clipping for value network
+                tc.nn.utils.clip_grad_norm_(value_net.parameters(), max_norm=0.5)
+
+                # Step size warmup
+                current_lr = value_optimizer.param_groups[0]['lr']
+                warmup_factor = min(1.0, total_timesteps / 10000)
+                for param_group in value_optimizer.param_groups:
+                    param_group['lr'] = current_lr * warmup_factor
+
                 value_optimizer.step()
                 if value_scheduler:
-                    value_scheduler.step()
+                    # Use value loss as metric for value scheduler
+                    value_scheduler.step(losses['value_loss'].item())
 
                 if comm.Get_rank() == ROOT_RANK and show_pbar:
                     weight_pbar.update(1)
+                
+                
 
             if comm.Get_rank() == ROOT_RANK and show_pbar:
                 weight_pbar.close()
@@ -416,25 +501,86 @@ def training_loop(
                 loss_avg = loss_sum / comm.Get_size()
                 global_losses[name] = loss_avg
 
+            # Log losses to wandb
+            # wandb.log({
+            #     "policy_loss": global_losses['policy_loss'].item(),
+            #     "value_loss": global_losses['value_loss'].item(),
+            #     "meanent": global_losses['meanent'].item(),
+            #     "clipfrac": global_losses['clipfrac'].item(),
+            #     "mean reward": np.mean(meta_ep_returns),
+            # })
+
+            # Collect losses for plotting
+            policy_losses.append(global_losses['policy_loss'].detach().numpy())
+            value_losses.append(global_losses['value_loss'].detach().numpy())
+
             if comm.Get_rank() == ROOT_RANK:
                 for name, value in global_losses.items():
                     logging.info(f"\t{name}: {value:>0.6f}")
                     print(f"\t{name}: {value:>0.6f}")
+                    if name == 'value_loss' and value > value_loss_threshold:
+                        logging.info(f"Value loss {value} exceeds threshold {value_loss_threshold}. Aborting run.")
+                        print(f"Value loss {value} exceeds threshold {value_loss_threshold}. Aborting run.")
+                        # wandb.run.finish()  # Abort the run
+                        return  # Exit the training loop
+            
+            # EARLY STOPPING ---------
+            # Monitor metrics
+            # mean_reward = np.mean(meta_ep_returns)
+            # reward_window.append(mean_reward)
+            # current_loss = global_losses['value_loss'].item()
+            # value_loss_window.append(current_loss)
+            
+            # # Early stopping check
+            # if current_loss < best_loss:
+            #     best_loss = current_loss
+            #     patience_counter = 0
+            # else:
+            #     patience_counter += 1
+            
+            # if patience_counter >= patience:
+            #     print("Early stopping triggered")
+            #     break
+            
+            # # Abort if value loss is too high
+            # if np.mean(value_loss_window) > value_loss_threshold:
+            #     print("Value loss too high, aborting training")
+            #     break
+            
+            
+        # Plot and save the policy losses
+        if comm.Get_rank() == ROOT_RANK:
+            fig, axs = plt.subplots(2, 1, figsize=(10, 12))
+
+            axs[0].plot(policy_losses, label='Policy Loss')
+            axs[0].set_xlabel('Epoch')
+            axs[0].set_ylabel('Policy Loss')
+            axs[0].set_title('Policy Loss Across Epochs')
+            axs[0].legend()
+            axs[0].grid(True)
+
+            axs[1].plot(value_losses, label='Value Loss')
+            axs[1].set_xlabel('Epoch')
+            axs[1].set_ylabel('Value Loss')
+            axs[1].set_title('Value Loss Across Epochs')
+            axs[1].legend()
+            axs[1].grid(True)
+
+            fig.tight_layout()
+            loss_plot_filename = os.path.join(log_directory, f'losses_{timestamp}.png')
+            plt.savefig(loss_plot_filename)
+            plt.close()
 
             
         
         # misc.: print metrics, save checkpoint.
         if comm.Get_rank() == ROOT_RANK:
             logging.info("-" * 100)
-            logging.info(f"mean meta-episode return: {np.mean(meta_ep_returns):>0.3f}")
+            logging.info(f"pol iter: {pol_iter} - mean meta-episode return: {np.mean(meta_ep_returns):>0.3f}")
             logging.info("-" * 100)
-            print("-" * 100)
-            print(f"mean meta-episode return: {np.mean(meta_ep_returns):>0.3f}")
-            print("mean episode length: ", total_timesteps/episode_count)
-            print("-" * 100)
+            print("-" * 80)
+            print(f"pol iter: {pol_iter} - mean meta-episode return: {np.mean(meta_ep_returns):>0.3f}")
+            print(f"mean episode length: {total_timesteps/episode_count:.2f}")
+            print("-" * 80)
             policy_checkpoint_fn(pol_iter + 1)
             value_checkpoint_fn(pol_iter + 1)
-            
-            
-    
-    

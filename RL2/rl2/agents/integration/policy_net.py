@@ -51,7 +51,6 @@ class StatefulPolicyNet(tc.nn.Module, Generic[ArchitectureState]):
 
         features, new_state = self._architecture(
             inputs=inputs, prev_state=prev_state)
-
         dist = self._policy_head(features)
 
         return dist, new_state

@@ -11,13 +11,21 @@ class LinearValueHead(tc.nn.Module):
     """
     def __init__(self, num_features):
         super().__init__()
-        self._num_features = num_features
-        self._linear = tc.nn.Linear(
-            in_features=self._num_features,
-            out_features=1,
-            bias=True)
-        tc.nn.init.xavier_normal_(self._linear.weight)
-        tc.nn.init.zeros_(self._linear.bias)
+        self.net = tc.nn.Sequential(
+            tc.nn.Linear(num_features, num_features // 2),
+            tc.nn.LayerNorm(num_features // 2),
+            tc.nn.ReLU(),
+            tc.nn.Linear(num_features // 2, num_features // 4),
+            tc.nn.LayerNorm(num_features // 4),
+            tc.nn.ReLU(),
+            tc.nn.Linear(num_features // 4, 1)
+        )
+        
+        # Initialize with smaller weights
+        for layer in self.net:
+            if isinstance(layer, tc.nn.Linear):
+                tc.nn.init.orthogonal_(layer.weight, gain=0.01)
+                tc.nn.init.zeros_(layer.bias)
 
     def forward(self, features: tc.FloatTensor) -> tc.FloatTensor:
         """
@@ -29,5 +37,4 @@ class LinearValueHead(tc.nn.Module):
         Returns:
             tc.FloatTensor of value estimates with shape [B, ...].
         """
-        v_preds = self._linear(features).squeeze(-1)
-        return v_preds
+        return self.net(features).squeeze(-1)

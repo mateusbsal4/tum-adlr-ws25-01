@@ -113,8 +113,7 @@ def generate_meta_episode(
 def assign_credit(
         meta_episode: MetaEpisode,
         gamma: float,
-        lam: float,
-        standardize_advs: bool = True
+        lam: float
     ) -> MetaEpisode:
     """
     Compute td lambda returns and generalized advantage estimates.
@@ -127,7 +126,6 @@ def assign_credit(
         meta_episode: meta-episode.
         gamma: discount factor.
         lam: GAE decay parameter.
-        standardize_advs: whether to standardize advantages
 
     Returns:
         meta_episode: an instance of the meta-episode class,
@@ -136,23 +134,25 @@ def assign_credit(
     T = len(meta_episode.acs)
     last_gae_lam = 0
     
+    # Normalize rewards first
+    rewards = np.array(meta_episode.rews)
+    rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
+    
     for t in reversed(range(T)):
-        r_t = meta_episode.rews[t]
+        # Use normalized rewards
+        r_t = rewards[t]
         V_t = meta_episode.vpreds[t]
         V_tp1 = meta_episode.vpreds[t + 1] if t + 1 < T else 0.0
         
-        # Calculate TD error
+        # Calculate TD error with reward scaling
         delta_t = r_t + gamma * V_tp1 - V_t
         
-        # GAE calculation
+        # Add stability term to GAE calculation
         last_gae_lam = delta_t + gamma * lam * last_gae_lam * (1 - meta_episode.dones[t])
         meta_episode.advs[t] = last_gae_lam
 
-    # Standardize advantages only once, at the GAE level
-    if standardize_advs:
-        meta_episode.advs = (meta_episode.advs - meta_episode.advs.mean()) / (meta_episode.advs.std() + 1e-8)
-    
-    # Calculate returns
+    # Normalize advantages
+    meta_episode.advs = (meta_episode.advs - meta_episode.advs.mean()) / (meta_episode.advs.std() + 1e-8)
     meta_episode.tdlam_rets = meta_episode.advs + meta_episode.vpreds
     return meta_episode
 

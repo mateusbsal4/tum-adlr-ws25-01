@@ -27,7 +27,7 @@ from rl2.algos.common import (
 from rl2.utils.comm_util import sync_grads
 from rl2.utils.constants import ROOT_RANK
 from datetime import datetime
-# import wandb  # Add this import
+import wandb  # Add this import
 
 
 
@@ -42,8 +42,7 @@ def compute_losses(
     policy_net: StatefulPolicyNet,
     value_net: StatefulValueNet,
     clip_param: float,
-    ent_coef: float,
-    standardize_advs: bool
+    ent_coef: float
     ):
     """
     Computes PPO losses given flattened arrays for timesteps.
@@ -90,6 +89,9 @@ def compute_losses(
     # New logp
     logpacs_new = pi_dists.log_prob(t_acs)  # shape [N]
     
+    # Normalize advantages
+    advs = (advs - advs.mean()) / (advs.std() + 1e-8)
+    
     # PPO ratio with clipping for numerical stability
     ratio = tc.exp(tc.clamp(logpacs_new - t_logpacs_old, -20, 20))
     surr1 = ratio * t_advs
@@ -99,22 +101,10 @@ def compute_losses(
     policy_surrogate_objective = tc.mean(tc.min(surr1, surr2))
     policy_loss = -(tc.clamp(policy_surrogate_objective, -20.0, 20.0) + policy_entropy_bonus)
     
-    # Value loss with normalization and clipping
-    value_pred_clipped = vpreds + tc.clamp(vpreds_new - vpreds, -clip_param, clip_param)
-    
-    # Use Huber loss for better stability
-    value_losses = huber_func(vpreds_new, t_tdlam_rets, delta=1.0)
-    value_losses_clipped = huber_func(value_pred_clipped, t_tdlam_rets, delta=1.0)
-    
-    # Take the maximum of clipped and unclipped value losses
-    value_loss = 0.5 * tc.max(value_losses, value_losses_clipped)
-    
-    # Add L2 regularization to prevent extreme values
-    l2_reg = 0.001 * sum(tc.sum(param ** 2) for param in value_net.parameters())
-    value_loss = value_loss + l2_reg
-    
-    # Clip the final value loss
-    value_loss = tc.clamp(value_loss, 0, 100.0)
+    # Value loss with normalization
+    target_values = (t_tdlam_rets - t_tdlam_rets.mean()) / (t_tdlam_rets.std() + 1e-8)
+    predicted_values = (vpreds_new - vpreds_new.mean()) / (vpreds_new.std() + 1e-8)
+    value_loss = tc.nn.MSELoss()(predicted_values, target_values)
     
     # clipfrac
     clipfrac = tc.mean(tc.greater(surr1, surr2).float())
@@ -277,9 +267,7 @@ def training_loop(
             meta_episode = assign_credit(
                 meta_episode=meta_episode,
                 gamma=discount_gamma,
-                lam=gae_lambda,
-                standardize_advs=standardize_advs
-            )
+                lam=gae_lambda)
             meta_episodes.append(meta_episode)
             
             
@@ -449,8 +437,7 @@ def training_loop(
                     policy_net=policy_net,
                     value_net=value_net,
                     clip_param=ppo_clip_param,
-                    ent_coef=ppo_ent_coef,
-                    standardize_advs=False
+                    ent_coef=ppo_ent_coef
                 )
 
                 # Backprop: Policy
@@ -458,29 +445,25 @@ def training_loop(
                 losses['policy_loss'].backward()
                 sync_grads(model=policy_net, comm=comm)
 
-                # # Add gradient clipping for policy network
-                # for param in policy_net.parameters():
-                #     if param.grad is not None:
-                #         param.grad.data.clamp_(-1, 1)  # Clip gradients between -1 and 1
+                # Add gradient clipping for policy network
+                for param in policy_net.parameters():
+                    if param.grad is not None:
+                        param.grad.data.clamp_(-1, 1)  # Clip gradients between -1 and 1
 
                 policy_optimizer.step()
                 if policy_scheduler:
                     # Use mean reward as metric for policy scheduler
                     policy_scheduler.step(np.mean(meta_ep_returns))
 
-                # # Backprop: Value
+                # Backprop: Value
                 value_optimizer.zero_grad()
                 losses['value_loss'].backward()
-
-                # More aggressive gradient clipping for value network
-                tc.nn.utils.clip_grad_norm_(value_net.parameters(), max_norm=0.5)
-
-                # Step size warmup
-                current_lr = value_optimizer.param_groups[0]['lr']
-                warmup_factor = min(1.0, total_timesteps / 10000)
-                for param_group in value_optimizer.param_groups:
-                    param_group['lr'] = current_lr * warmup_factor
-
+                sync_grads(model=value_net, comm=comm)
+                
+                # Gradient clipping for value network   
+                for param in value_net.parameters():
+                    if param.grad is not None:
+                        param.grad.data.clamp_(-1, 1)
                 value_optimizer.step()
                 if value_scheduler:
                     # Use value loss as metric for value scheduler

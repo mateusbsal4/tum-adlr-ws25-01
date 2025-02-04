@@ -13,19 +13,9 @@ class LinearValueHead(tc.nn.Module):
         super().__init__()
         self.net = tc.nn.Sequential(
             tc.nn.Linear(num_features, num_features // 2),
-            tc.nn.LayerNorm(num_features // 2),
             tc.nn.ReLU(),
-            tc.nn.Linear(num_features // 2, num_features // 4),
-            tc.nn.LayerNorm(num_features // 4),
-            tc.nn.ReLU(),
-            tc.nn.Linear(num_features // 4, 1)
+            tc.nn.Linear(num_features // 2, 1)
         )
-        
-        # Initialize with smaller weights
-        for layer in self.net:
-            if isinstance(layer, tc.nn.Linear):
-                tc.nn.init.orthogonal_(layer.weight, gain=0.01)
-                tc.nn.init.zeros_(layer.bias)
 
     def forward(self, features: tc.FloatTensor) -> tc.FloatTensor:
         """

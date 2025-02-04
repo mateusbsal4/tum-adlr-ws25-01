@@ -12,3 +12,9 @@ test.py
 /test/
 **/backup/
 **/checkpoints*
+**/wandb/
+**/logs/
+**/models/
+**/reward-log/
+**/monitor_logs/
+**/models/

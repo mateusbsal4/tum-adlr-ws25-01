@@ -60,20 +60,21 @@ def create_argparser():
 
     ### Training
     parser.add_argument("--max_pol_iters", type=int, default=5000) # like vanilla lander
-    parser.add_argument("--timesteps_per_pol_update", type=int, default=2048,
+    parser.add_argument("--timesteps_per_pol_update", type=int, default=3_906,
                         help="If -1, quantity is determined using a formula")
     parser.add_argument("--timesteps_per_learner_batch", type=int, default=64) #  vanilla PPO = 64 timesteps
+    parser.add_argument("--meta_ep_per_learner_batch", type=int, default=5) #  vanilla PPO = 64 timesteps
     parser.add_argument("--ppo_opt_epochs", type=int, default=10)
     
-    parser.add_argument("--ppo_clip_param", type=float, default=0.1) # like vanilla lander
-    parser.add_argument("--ppo_ent_coef", type=float, default=0.01) #adjusted for LSTM
-    parser.add_argument("--discount_gamma", type=float, default=0.98)
-    parser.add_argument("--gae_lambda", type=float, default=0.95) # like vanilla lander
+    parser.add_argument("--ppo_clip_param", type=float, default=0.1118520486242931) # like vanilla lander
+    parser.add_argument("--ppo_ent_coef", type=float, default=0.03817033721208064) #adjusted for LSTM
+    parser.add_argument("--discount_gamma", type=float, default=0.9839244506585908)
+    parser.add_argument("--gae_lambda", type=float, default=0.9719123597888648) # like vanilla lander
     parser.add_argument("--standardize_advs", type=int, choices=[0,1], default=1) # adjusted for LSTM
-    parser.add_argument("--adam_lr", type=float, default=1e-4)
+    parser.add_argument("--adam_lr", type=float, default=0.0009931916739343528)
     parser.add_argument("--adam_eps", type=float, default=1e-5)
     parser.add_argument("--adam_wd", type=float, default=0.01)
-    parser.add_argument("--value_lr", type=float, default=1e-4)
+    parser.add_argument("--value_lr", type=float, default=0.000594249166404675)
     parser.add_argument("--wandb_project", type=str, default='rl2_project')  # Add this line
     parser.add_argument("--wandb_entity", type=str, default='')  # Add this line
     parser.add_argument("--value_loss_threshold", type=float, default=1_000, help="Threshold for value loss to abort the run")  # Add this line
@@ -186,7 +187,7 @@ def main():
     comm = get_comm()
 
     # Initialize wandb
-    wandb.init(project=args.wandb_project, entity=args.wandb_entity)  # Add this line
+    # wandb.init(project=args.wandb_project, entity=args.wandb_entity)  # Add this line
 
     # logging --------
     log_directory = os.path.join(args.checkpoint_dir,"logs")
@@ -330,7 +331,7 @@ def main():
         policy_scheduler=policy_scheduler,
         value_scheduler=value_scheduler,
         timesteps_per_pol_update=timesteps_per_pol_update,
-        timesteps_per_learner_batch=args.timesteps_per_learner_batch,
+        meta_ep_per_learner_batch=args.meta_ep_per_learner_batch,
         meta_episode_len=args.meta_episode_len,
         ppo_opt_epochs=args.ppo_opt_epochs,
         ppo_clip_param=args.ppo_clip_param,
@@ -344,7 +345,7 @@ def main():
         value_checkpoint_fn=value_checkpoint_fn,
         checkpoint_dir=args.checkpoint_dir,
         comm=comm,
-        value_loss_threshold=args.value_loss_threshold  # Add this line
+        value_loss_threshold=args.value_loss_threshold,  # Add this line
     )
     
     print("Training Ended!")

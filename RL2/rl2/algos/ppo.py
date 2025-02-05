@@ -28,92 +28,103 @@ from rl2.utils.comm_util import sync_grads
 from rl2.utils.constants import ROOT_RANK
 from datetime import datetime
 import wandb  # Add this import
-
+from rl2.utils.log2csv import log2csv
 
 
 def compute_losses(
-    obs: np.ndarray,
-    acs: np.ndarray,
-    rews: np.ndarray,
-    dones: np.ndarray,
-    logpacs_old: np.ndarray,
-    advs: np.ndarray,
-    tdlam_rets: np.ndarray,
+    meta_episodes,
     policy_net: StatefulPolicyNet,
     value_net: StatefulValueNet,
     clip_param: float,
     ent_coef: float
-    ):
+):
     """
-    Computes PPO losses given flattened arrays for timesteps.
-
-    obs: shape [N, obs_dim]
-    acs, rews, dones, logpacs_old, advs, tdlam_rets: shape [N]
+    Computes PPO losses treating each episode as a sequence.
+    
+    Args:
+        meta_episodes: List of MetaEpisode objects
+        policy_net: Policy network
+        value_net: Value network
+        clip_param: PPO clip parameter
+        ent_coef: Entropy coefficient
     """
+    total_policy_loss = 0
+    total_value_loss = 0
+    total_entropy = 0
+    num_episodes = len(meta_episodes)
 
-    # Convert to tensors
-    B = len(rews)
-    t_obs = tc.FloatTensor(obs)                   # [N, obs_dim]
-    t_acs = tc.LongTensor(acs)                    # [N]
-    t_rews = tc.FloatTensor(rews)                 # [N]
-    t_dones = tc.FloatTensor(dones)               # [N]
-    t_logpacs_old = tc.FloatTensor(logpacs_old)   # [N]
-    t_advs = tc.FloatTensor(advs)                 # [N]
-    t_tdlam_rets = tc.FloatTensor(tdlam_rets)     # [N]
-    prev_state_policy_net = policy_net.initial_state(batch_size=B)
-    prev_state_value_net = value_net.initial_state(batch_size=B)
+    for episode in meta_episodes:
+        # Convert episode data to tensors
+        t_obs = tc.FloatTensor(episode.obs)           # [T, obs_dim]
+        t_acs = tc.LongTensor(episode.acs)           # [T]
+        t_rews = tc.FloatTensor(episode.rews)         # [T]
+        t_dones = tc.FloatTensor(episode.dones)       # [T]
+        t_logpacs_old = tc.FloatTensor(episode.logpacs)   # [T]
+        t_advs = tc.FloatTensor(episode.advs)         # [T]
+        t_tdlam_rets = tc.FloatTensor(episode.tdlam_rets) # [T]
 
-    # Forward through feed-forward policy & value
-    pi_dists, _ = policy_net(
-        curr_obs=t_obs,
-        prev_action=t_acs,
-        prev_reward=t_rews,
-        prev_done=t_dones,
-        prev_state=prev_state_policy_net) # distribution over actions, shape [N, ...]
-    
-    vpreds, _ = value_net(
-        curr_obs=t_obs,
-        prev_action=t_acs,
-        prev_reward=t_rews,
-        prev_done=t_dones,
-        prev_state=prev_state_value_net)          # predicted values, shape [N]
-    # If your nets are originally RNN-based, you'd need to handle sequence states carefully.
+        # Initialize LSTM states
+        h_policy = policy_net.initial_state(batch_size=1)
+        h_value = value_net.initial_state(batch_size=1)
 
-    # Entropy
-    entropies = pi_dists.entropy()     # shape [N]
-    vpreds_new = vpreds
-    
-    meanent = entropies.mean()
-    policy_entropy_bonus = ent_coef * meanent
+        # Forward pass through the entire sequence
+        pi_dists = []
+        vpreds = []
+        
+        for t in range(len(episode.obs)):
+            # Get current timestep data
+            obs_t = t_obs[t:t+1]
+            act_t = t_acs[t:t+1]
+            rew_t = t_rews[t:t+1]
+            done_t = t_dones[t:t+1]
 
-    # New logp
-    logpacs_new = pi_dists.log_prob(t_acs)  # shape [N]
-    
-    # Normalize advantages
-    advs = (advs - advs.mean()) / (advs.std() + 1e-8)
-    
-    # PPO ratio with clipping for numerical stability
-    ratio = tc.exp(tc.clamp(logpacs_new - t_logpacs_old, -20, 20))
-    surr1 = ratio * t_advs
-    surr2 = tc.clamp(ratio, 1.0 - clip_param, 1.0 + clip_param) * t_advs
-    
-    # Policy loss with additional clipping
-    policy_surrogate_objective = tc.mean(tc.min(surr1, surr2))
-    policy_loss = -(tc.clamp(policy_surrogate_objective, -20.0, 20.0) + policy_entropy_bonus)
-    
-    # Value loss with normalization
-    target_values = (t_tdlam_rets - t_tdlam_rets.mean()) / (t_tdlam_rets.std() + 1e-8)
-    predicted_values = (vpreds_new - vpreds_new.mean()) / (vpreds_new.std() + 1e-8)
-    value_loss = tc.nn.MSELoss()(predicted_values, target_values)
-    
-    # clipfrac
-    clipfrac = tc.mean(tc.greater(surr1, surr2).float())
+            # Policy network forward pass
+            pi_dist_t, h_policy = policy_net(
+                curr_obs=obs_t,
+                prev_action=act_t,
+                prev_reward=rew_t,
+                prev_done=done_t,
+                prev_state=h_policy
+            )
+            pi_dists.append(pi_dist_t)
 
+            # Value network forward pass
+            vpred_t, h_value = value_net(
+                curr_obs=obs_t,
+                prev_action=act_t,
+                prev_reward=rew_t,
+                prev_done=done_t,
+                prev_state=h_value
+            )
+            vpreds.append(vpred_t)
+
+        # Stack predictions
+        logpacs_new = tc.stack([dist.log_prob(act) 
+                              for dist, act in zip(pi_dists, t_acs)])
+        vpreds_new = tc.cat(vpreds)
+        
+        # Compute policy loss
+        ratio = tc.exp(tc.clamp(logpacs_new - t_logpacs_old, -20, 20))
+        surr1 = ratio * t_advs
+        surr2 = tc.clamp(ratio, 1.0 - clip_param, 1.0 + clip_param) * t_advs
+        policy_loss = -tc.mean(tc.min(surr1, surr2))
+
+        # Add entropy bonus
+        entropy = tc.mean(tc.stack([dist.entropy() for dist in pi_dists]))
+        policy_loss = policy_loss - ent_coef * entropy
+
+        # Compute value loss
+        value_loss = tc.nn.MSELoss()(vpreds_new, t_tdlam_rets)
+
+        total_policy_loss += policy_loss
+        total_value_loss += value_loss
+        total_entropy += entropy
+
+    # Average losses across episodes
     return {
-        "policy_loss": policy_loss,
-        "value_loss": value_loss,
-        "meanent": meanent,
-        "clipfrac": clipfrac
+        "policy_loss": total_policy_loss / num_episodes,
+        "value_loss": total_value_loss / num_episodes,
+        "meanent": total_entropy / num_episodes,
     }
 
 
@@ -127,7 +138,7 @@ def training_loop(
         policy_scheduler: Optional[tc.optim.lr_scheduler._LRScheduler],  # pylint: disable=W0212
         value_scheduler: Optional[tc.optim.lr_scheduler._LRScheduler],  # pylint: disable=W0212
         timesteps_per_pol_update: int,
-        timesteps_per_learner_batch: int,
+        meta_ep_per_learner_batch: int,
         meta_episode_len: int,
         ppo_opt_epochs: int,
         ppo_clip_param: float,
@@ -267,7 +278,8 @@ def training_loop(
             meta_episode = assign_credit(
                 meta_episode=meta_episode,
                 gamma=discount_gamma,
-                lam=gae_lambda)
+                lam=gae_lambda
+            )
             meta_episodes.append(meta_episode)
             
             
@@ -382,58 +394,30 @@ def training_loop(
                 print(f"Mean advantage: {mean_adv_r0}")
 
 
-        # Suppose you've just collected `meta_episodes` via generate_meta_episode, etc.
-        # Flatten them into a single buffer of timesteps
-        (
-            obs,
-            acs,
-            rews,
-            dones,
-            logpacs,
-            advs,
-            tdlam_rets
-        ) = flatten_episodes(meta_episodes)
 
-        N = acs.shape[0]  # total timesteps collected
+        N = len(meta_episodes)  # total episodes collected
         indices = np.arange(N)
 
         for opt_epoch in range(ppo_opt_epochs):
-            # Shuffle all timesteps
-            np.random.shuffle(indices)
+            # Shuffle episodes (not timesteps)
+            np.random.shuffle(meta_episodes)
             
-            batch_size = timesteps_per_learner_batch
-
             if comm.Get_rank() == ROOT_RANK:
                 logging.info(f"pol update {pol_iter}, opt_epoch: {opt_epoch}...")
                 print(f"\npol update {pol_iter}, opt_epoch: {opt_epoch}...\n")
                 if show_pbar:
                     # total number of minibatches
-                    total_mb = (N // batch_size)
+                    total_mb = (N // meta_ep_per_learner_batch)
                     weight_pbar = tqdm(total=total_mb, desc="Updating Weights")
-
-            # Slice minibatches of timesteps
-            for start_idx in range(0, N, batch_size):
-                end_idx = start_idx + batch_size
-                mb_idxs = indices[start_idx:end_idx]
-
-                # Extract the minibatch from flattened arrays
-                mb_obs = obs[mb_idxs]
-                mb_acs = acs[mb_idxs]
-                mb_rews = rews[mb_idxs]
-                mb_dones = dones[mb_idxs]
-                mb_logpacs = logpacs[mb_idxs]
-                mb_advs = advs[mb_idxs]
-                mb_tdlam_rets = tdlam_rets[mb_idxs]
+            
+            # Process episodes in mini-batches
+            for start_idx in range(0, len(meta_episodes), meta_ep_per_learner_batch):
+                end_idx = start_idx + meta_ep_per_learner_batch
+                mb_episodes = meta_episodes[start_idx:end_idx]
                 
-                # Compute losses on this batch
+                # Compute losses on this batch of episodes
                 losses = compute_losses(
-                    obs=mb_obs,
-                    acs=mb_acs,
-                    rews=mb_rews,
-                    dones=mb_dones,
-                    logpacs_old=mb_logpacs,
-                    advs=mb_advs,
-                    tdlam_rets=mb_tdlam_rets,
+                    meta_episodes=mb_episodes,
                     policy_net=policy_net,
                     value_net=value_net,
                     clip_param=ppo_clip_param,
@@ -444,12 +428,7 @@ def training_loop(
                 policy_optimizer.zero_grad()
                 losses['policy_loss'].backward()
                 sync_grads(model=policy_net, comm=comm)
-
-                # Add gradient clipping for policy network
-                for param in policy_net.parameters():
-                    if param.grad is not None:
-                        param.grad.data.clamp_(-1, 1)  # Clip gradients between -1 and 1
-
+                tc.nn.utils.clip_grad_norm_(policy_net.parameters(), max_norm=0.8)
                 policy_optimizer.step()
                 if policy_scheduler:
                     # Use mean reward as metric for policy scheduler
@@ -459,11 +438,7 @@ def training_loop(
                 value_optimizer.zero_grad()
                 losses['value_loss'].backward()
                 sync_grads(model=value_net, comm=comm)
-                
-                # Gradient clipping for value network   
-                for param in value_net.parameters():
-                    if param.grad is not None:
-                        param.grad.data.clamp_(-1, 1)
+                tc.nn.utils.clip_grad_norm_(value_net.parameters(), max_norm=0.8)
                 value_optimizer.step()
                 if value_scheduler:
                     # Use value loss as metric for value scheduler
@@ -484,14 +459,6 @@ def training_loop(
                 loss_avg = loss_sum / comm.Get_size()
                 global_losses[name] = loss_avg
 
-            # Log losses to wandb
-            # wandb.log({
-            #     "policy_loss": global_losses['policy_loss'].item(),
-            #     "value_loss": global_losses['value_loss'].item(),
-            #     "meanent": global_losses['meanent'].item(),
-            #     "clipfrac": global_losses['clipfrac'].item(),
-            #     "mean reward": np.mean(meta_ep_returns),
-            # })
 
             # Collect losses for plotting
             policy_losses.append(global_losses['policy_loss'].detach().numpy())
@@ -507,28 +474,7 @@ def training_loop(
                         # wandb.run.finish()  # Abort the run
                         return  # Exit the training loop
             
-            # EARLY STOPPING ---------
-            # Monitor metrics
-            # mean_reward = np.mean(meta_ep_returns)
-            # reward_window.append(mean_reward)
-            # current_loss = global_losses['value_loss'].item()
-            # value_loss_window.append(current_loss)
             
-            # # Early stopping check
-            # if current_loss < best_loss:
-            #     best_loss = current_loss
-            #     patience_counter = 0
-            # else:
-            #     patience_counter += 1
-            
-            # if patience_counter >= patience:
-            #     print("Early stopping triggered")
-            #     break
-            
-            # # Abort if value loss is too high
-            # if np.mean(value_loss_window) > value_loss_threshold:
-            #     print("Value loss too high, aborting training")
-            #     break
             
             
         # Plot and save the policy losses
@@ -564,6 +510,9 @@ def training_loop(
             print("-" * 80)
             print(f"pol iter: {pol_iter} - mean meta-episode return: {np.mean(meta_ep_returns):>0.3f}")
             print(f"mean episode length: {total_timesteps/episode_count:.2f}")
+            logging.info(f"mean episode length: {total_timesteps/episode_count:.2f}")
             print("-" * 80)
             policy_checkpoint_fn(pol_iter + 1)
             value_checkpoint_fn(pol_iter + 1)
+            
+        log2csv(checkpoint_dir)

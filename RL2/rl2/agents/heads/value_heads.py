@@ -27,10 +27,10 @@ class LinearValueHead(tc.nn.Module):
         Returns:
             tc.FloatTensor of value estimates with shape [B, ...].
         """
-        print("\nDEBUG - Value Head:")
-        print(f"Input features range: {features.min().item():.3f} to {features.max().item():.3f}")
+        # print("\nDEBUG - Value Head:")
+        # print(f"Input features range: {features.min().item():.3f} to {features.max().item():.3f}")
         
         values = self.net(features).squeeze(-1)
-        print(f"Output values range: {values.min().item():.3f} to {values.max().item():.3f}")
+        # print(f"Output values range: {values.min().item():.3f} to {values.max().item():.3f}")
         
         return values

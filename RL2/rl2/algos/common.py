@@ -134,42 +134,67 @@ def assign_credit(
     T = len(meta_episode.acs)
     last_gae_lam = 0
     
-    # Debug prints for input values
-    print("\nDEBUG - assign_credit inputs:")
-    print(f"Rewards range: {meta_episode.rews.min():.3f} to {meta_episode.rews.max():.3f}")
-    print(f"Value preds range: {meta_episode.vpreds.min():.3f} to {meta_episode.vpreds.max():.3f}")
-    
-    # Normalize rewards
-    rewards = np.array(meta_episode.rews)
-    rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
-    
-    print(f"Normalized rewards range: {rewards.min():.3f} to {rewards.max():.3f}")
-    
-    for t in reversed(range(T)):
-        r_t = rewards[t]
+    for t in reversed(range(0, T)):  # T-1, ..., 0.
+        r_t = meta_episode.rews[t]
         V_t = meta_episode.vpreds[t]
-        V_tp1 = meta_episode.vpreds[t + 1] if t + 1 < T else 0.0
+        V_tp1 = meta_episode.vpreds[t+1] if t+1 < T else 0.0
+        A_tp1 = meta_episode.advs[t+1] if t+1 < T else 0.0
+        delta_t = -V_t + r_t + gamma * V_tp1
+        A_t = delta_t + gamma * lam * A_tp1
+        meta_episode.advs[t] = A_t
+
+    meta_episode.tdlam_rets = meta_episode.vpreds + meta_episode.advs
+
+    return meta_episode
+    
+    # # Debug prints for input values
+    # print("\nDEBUG - assign_credit inputs:")
+    # print(f"Rewards range: {meta_episode.rews.min():.3f} to {meta_episode.rews.max():.3f}")
+    # print(f"Value preds range: {meta_episode.vpreds.min():.3f} to {meta_episode.vpreds.max():.3f}")
+    
+    
+    # rewards = np.array(meta_episode.rews)
+    # # Normalize rewards
+    # # rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
+    
+    # # print(f"Normalized rewards range: {rewards.min():.3f} to {rewards.max():.3f}")
+    
+    # for t in reversed(range(T)):
+    #     r_t = rewards[t]
+    #     V_t = meta_episode.vpreds[t]
+    #     V_tp1 = meta_episode.vpreds[t + 1] if t + 1 < T else 0.0
         
-        delta_t = r_t + gamma * V_tp1 - V_t
-        last_gae_lam = delta_t + gamma * lam * last_gae_lam * (1 - meta_episode.dones[t])
-        meta_episode.advs[t] = last_gae_lam
+    #     delta_t = r_t + gamma * V_tp1 - V_t
+    #     last_gae_lam = delta_t + gamma * lam * last_gae_lam * (1 - meta_episode.dones[t])
+    #     meta_episode.advs[t] = last_gae_lam
         
-        if np.isnan(last_gae_lam):
-            print(f"\nDEBUG - NaN detected in GAE calculation at t={t}:")
-            print(f"r_t: {r_t:.3f}, V_t: {V_t:.3f}, V_tp1: {V_tp1:.3f}")
-            print(f"delta_t: {delta_t:.3f}, last_gae_lam: {last_gae_lam}")
+    #     if np.isnan(last_gae_lam):
+    #         print(f"\nDEBUG - NaN detected in GAE calculation at t={t}:")
+    #         print(f"r_t: {r_t:.3f}, V_t: {V_t:.3f}, V_tp1: {V_tp1:.3f}")
+    #         print(f"delta_t: {delta_t:.3f}, last_gae_lam: {last_gae_lam}")
     
-    # Debug prints for advantages
-    print("\nDEBUG - Advantages before normalization:")
-    print(f"Range: {meta_episode.advs.min():.3f} to {meta_episode.advs.max():.3f}")
+    # # Debug prints for advantages
+    # print("\nDEBUG - Advantages before normalization:")
+    # print(f"Range: {meta_episode.advs.min():.3f} to {meta_episode.advs.max():.3f}")
     
-    # Normalize advantages
-    meta_episode.advs = (meta_episode.advs - meta_episode.advs.mean()) / (meta_episode.advs.std() + 1e-8)
-    meta_episode.tdlam_rets = meta_episode.advs + meta_episode.vpreds
+    # # Normalize advantages
+    # meta_episode.advs = (meta_episode.advs - meta_episode.advs.mean()) / (meta_episode.advs.std() + 1e-8)
+    # meta_episode.tdlam_rets = meta_episode.advs + meta_episode.vpreds
     
-    print("\nDEBUG - Final values:")
-    print(f"Normalized advantages range: {meta_episode.advs.min():.3f} to {meta_episode.advs.max():.3f}")
-    print(f"TD lambda returns range: {meta_episode.tdlam_rets.min():.3f} to {meta_episode.tdlam_rets.max():.3f}")
+    # print("\nDEBUG - Final values:")
+    # print(f"Normalized advantages range: {meta_episode.advs.min():.3f} to {meta_episode.advs.max():.3f}")
+    # print(f"TD lambda returns range: {meta_episode.tdlam_rets.min():.3f} to {meta_episode.tdlam_rets.max():.3f}")
+    
+    for t in reversed(range(0, T)):  # T-1, ..., 0.
+        r_t = meta_episode.rews[t]
+        V_t = meta_episode.vpreds[t]
+        V_tp1 = meta_episode.vpreds[t+1] if t+1 < T else 0.0
+        A_tp1 = meta_episode.advs[t+1] if t+1 < T else 0.0
+        delta_t = -V_t + r_t + gamma * V_tp1
+        A_t = delta_t + gamma * lam * A_tp1
+        meta_episode.advs[t] = A_t
+
+    meta_episode.tdlam_rets = meta_episode.vpreds + meta_episode.advs
     
     return meta_episode
 

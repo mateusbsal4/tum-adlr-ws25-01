@@ -81,15 +81,15 @@ class LSTM(tc.nn.Module):
         state = prev_state
         for t in range(0, T):  # 0, ..., T-1
             h_prev, c_prev = tc.chunk(state, 2, dim=-1)
-            print("\nDEBUG - LSTM:")
-            print(f"LSTM input range: {inputs[:,t,:].min().item():.3f} to {inputs[:,t,:].max().item():.3f}")
-            print(f"prev_state range: {h_prev.min().item():.3f} to {h_prev.max().item():.3f}")
+            # print("\nDEBUG - LSTM:")
+            # print(f"LSTM input range: {inputs[:,t,:].min().item():.3f} to {inputs[:,t,:].max().item():.3f}")
+            # print(f"prev_state range: {h_prev.min().item():.3f} to {h_prev.max().item():.3f}")
             
             fioj_from_x = self._x2fioj(inputs[:,t,:])
-            print(f"fioj_from_x range: {fioj_from_x.min().item():.3f} to {fioj_from_x.max().item():.3f}")
+            # print(f"fioj_from_x range: {fioj_from_x.min().item():.3f} to {fioj_from_x.max().item():.3f}")
             
             fioj_from_h = self._h2fioj(h_prev)
-            print(f"fioj_from_h range: {fioj_from_h.min().item():.3f} to {fioj_from_h.max().item():.3f}")
+            # print(f"fioj_from_h range: {fioj_from_h.min().item():.3f} to {fioj_from_h.max().item():.3f}")
             
             if self._use_ln:
                 fioj_from_x = self._x2fioj_ln(fioj_from_x)
@@ -102,10 +102,10 @@ class LSTM(tc.nn.Module):
             # j = tc.nn.ReLU()(j)
             j = tc.tanh(j)
 
-            print(f"f gate range: {f.min().item():.3f} to {f.max().item():.3f}")
-            print(f"i gate range: {i.min().item():.3f} to {i.max().item():.3f}")
-            print(f"o gate range: {o.min().item():.3f} to {o.max().item():.3f}")
-            print(f"j range: {j.min().item():.3f} to {j.max().item():.3f}")
+            # print(f"f gate range: {f.min().item():.3f} to {f.max().item():.3f}")
+            # print(f"i gate range: {i.min().item():.3f} to {i.max().item():.3f}")
+            # print(f"o gate range: {o.min().item():.3f} to {o.max().item():.3f}")
+            # print(f"j range: {j.min().item():.3f} to {j.max().item():.3f}")
 
             c_new = f * c_prev + i * j
             h_new = o * c_new

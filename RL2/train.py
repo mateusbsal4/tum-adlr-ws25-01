@@ -78,6 +78,7 @@ def create_argparser():
     parser.add_argument("--wandb_project", type=str, default='rl2_project')  # Add this line
     parser.add_argument("--wandb_entity", type=str, default='')  # Add this line
     parser.add_argument("--value_loss_threshold", type=float, default=1_000, help="Threshold for value loss to abort the run")  # Add this line
+    parser.add_argument("--visualize_weights", action="store_true", default=False, help="Toggle weight visualization during training")
     return parser
 
 
@@ -345,7 +346,8 @@ def main():
         value_checkpoint_fn=value_checkpoint_fn,
         checkpoint_dir=args.checkpoint_dir,
         comm=comm,
-        value_loss_threshold=args.value_loss_threshold,  # Add this line
+        value_loss_threshold=args.value_loss_threshold,
+        visualize_weights_flag=args.visualize_weights
     )
     
     print("Training Ended!")

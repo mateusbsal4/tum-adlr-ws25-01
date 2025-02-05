@@ -29,6 +29,7 @@ from rl2.utils.constants import ROOT_RANK
 from datetime import datetime
 import wandb  # Add this import
 from rl2.utils.log2csv import log2csv
+from rl2.utils.visualize_weights import visualize_weights
 
 
 def compute_losses(
@@ -98,6 +99,7 @@ def compute_losses(
             )
             vpreds.append(vpred_t)
 
+        print(f"vpreds_old between {min(vpreds)[0]} and {max(vpreds)[0]}")
         # Stack predictions
         logpacs_new = tc.stack([dist.log_prob(act) 
                               for dist, act in zip(pi_dists, t_acs)])
@@ -114,7 +116,8 @@ def compute_losses(
         policy_loss = policy_loss - ent_coef * entropy
 
         # Compute value loss
-        value_loss = tc.nn.MSELoss()(vpreds_new, t_tdlam_rets)
+        value_loss = huber_func(vpreds_new, t_tdlam_rets)
+        print(f"vpreds_new between {min(vpreds_new)} and {max(vpreds_new)} \n vs t_tdlam_rets between {min(t_tdlam_rets)} and {max(t_tdlam_rets)}")
 
         total_policy_loss += policy_loss
         total_value_loss += value_loss
@@ -153,6 +156,7 @@ def training_loop(
         checkpoint_dir: str,
         comm: type(MPI.COMM_WORLD),
         value_loss_threshold: float,  # Add this parameter
+        visualize_weights_flag: bool = False
     ) -> None:
     """
     Train a stateful RL^2 agent via PPO to maximize discounted cumulative reward
@@ -182,6 +186,7 @@ def training_loop(
         value_checkpoint_fn: a callback for saving checkpoints of value net.
         comm: mpi comm_world communicator object.
         value_loss_threshold: threshold for value loss to abort the run.
+        visualize_weights_flag: flag to control visualization
 
     Returns:
         None
@@ -228,6 +233,7 @@ def training_loop(
     log_directory = os.path.join(checkpoint_dir, 'logs')
     os.makedirs(log_directory, exist_ok=True)
     show_pbar = False # optional: use progress bar to visualize the progress
+    global_update_step = 0
     
  
     policy_losses = []
@@ -238,14 +244,6 @@ def training_loop(
     if comm.Get_rank() == ROOT_RANK and show_pbar:
         total_timesteps_pbar = tqdm(total=max_pol_iters * 2048, desc="Total Timesteps", position=2, ncols=80, leave=True)
 
-    # Add moving averages for monitoring
-    reward_window = deque(maxlen=100)
-    value_loss_window = deque(maxlen=100)
-    
-    # Early stopping variables
-    best_loss = float('+inf')
-    patience = 10
-    patience_counter = 0
     
     for pol_iter in range(pol_iters_so_far, max_pol_iters):
         # create a new environment
@@ -428,7 +426,7 @@ def training_loop(
                 policy_optimizer.zero_grad()
                 losses['policy_loss'].backward()
                 sync_grads(model=policy_net, comm=comm)
-                tc.nn.utils.clip_grad_norm_(policy_net.parameters(), max_norm=0.8)
+                # tc.nn.utils.clip_grad_norm_(policy_net.parameters(), max_norm=0.8)
                 policy_optimizer.step()
                 if policy_scheduler:
                     # Use mean reward as metric for policy scheduler
@@ -438,7 +436,7 @@ def training_loop(
                 value_optimizer.zero_grad()
                 losses['value_loss'].backward()
                 sync_grads(model=value_net, comm=comm)
-                tc.nn.utils.clip_grad_norm_(value_net.parameters(), max_norm=0.8)
+                # tc.nn.utils.clip_grad_norm_(value_net.parameters(), max_norm=0.8)
                 value_optimizer.step()
                 if value_scheduler:
                     # Use value loss as metric for value scheduler
@@ -446,7 +444,9 @@ def training_loop(
 
                 if comm.Get_rank() == ROOT_RANK and show_pbar:
                     weight_pbar.update(1)
-                
+                global_update_step += 1
+                if visualize_weights_flag and comm.Get_rank() == ROOT_RANK:
+                    visualize_weights(policy_net, value_net, out_dir=log_directory, update_step=global_update_step)
                 
 
             if comm.Get_rank() == ROOT_RANK and show_pbar:

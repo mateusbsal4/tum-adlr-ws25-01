@@ -466,6 +466,26 @@ def setup_logger(log_dir):
     
     return logger
 
+def find_latest_model(run_dir):
+    """Find the latest model file in the run directory."""
+    if not os.path.exists(run_dir):
+        return None
+        
+    model_files = []
+    # Look in main run directory and checkpoints subdirectory
+    for root in [run_dir, os.path.join(run_dir, 'checkpoints')]:
+        if os.path.exists(root):
+            for file in os.listdir(root):
+                if file.endswith('.pth'):
+                    full_path = os.path.join(root, file)
+                    model_files.append((os.path.getmtime(full_path), full_path))
+    
+    if not model_files:
+        return None
+        
+    # Return the most recent file
+    return sorted(model_files, key=lambda x: x[0])[-1][1]
+
 def main():
     parser = argparse.ArgumentParser(description='Train or evaluate RL2-PPO on LunarLander')
     parser.add_argument('--mode', choices=['train', 'evaluate'], default='train',
@@ -479,6 +499,8 @@ def main():
                         help='Resume training from a saved model')
     parser.add_argument('--run-name', type=str, default=None,
                         help='Custom name for the training run directory')
+    parser.add_argument('--resume-from', type=str, default=None,
+                       help='Resume training from the latest model in specified run directory')
     
     args = parser.parse_args()
     
@@ -488,19 +510,32 @@ def main():
     size = comm.Get_size()
     
     env_name = "LunarLander-v2"
-    num_episodes = 10000
+    num_episodes = 10000  # This is now the total episodes across all workers
     eval_interval = 50
     num_episodes_per_update = 10
     num_checkpoints_to_keep = 5
     
+    # Calculate episodes per worker
+    episodes_per_worker = num_episodes // size
+    if rank == size - 1:  # Last worker gets any remaining episodes
+        episodes_per_worker += num_episodes % size
+    
     # Only render on rank 0
     render_mode = "human" if args.render and rank == 0 else None
     
-    if args.resume and args.model_path:
-        agent = RL2PPO.load_model(args.model_path, render_mode=render_mode)
+    if args.resume_from:
+        # Find the latest model in the specified run directory
+        run_dir = os.path.join('models', args.resume_from)
+        latest_model = find_latest_model(run_dir)
+        
+        if latest_model is None and rank == 0:
+            print(f"No model files found in {run_dir}")
+            return
+            
+        agent = RL2PPO.load_model(latest_model, render_mode=render_mode)
         if rank == 0:
             logger = setup_logger(agent.log_dir)
-            logger.info(f"Resuming training from {args.model_path}")
+            logger.info(f"Resuming training from {latest_model}")
         num_episodes = max(num_episodes - agent.total_episodes, 0)
         training_rewards = agent.training_rewards
         eval_rewards = agent.eval_rewards
@@ -544,7 +579,7 @@ def main():
             logger.info("-" * 50)
     
     try:
-        while agent.total_episodes < num_episodes:
+        while agent.total_episodes < episodes_per_worker:  # Each worker runs its share
             avg_reward, avg_length, actor_loss, critic_loss = agent.train_episode(num_episodes_per_update)
             
             # Synchronize rewards and metrics across workers
@@ -561,18 +596,16 @@ def main():
                 agent.eval_rewards = eval_rewards
                 agent.best_eval_reward = best_eval_reward
                 
-                # Calculate mean reward only if window is not empty
-                window_mean = np.mean(reward_window) if len(reward_window) > 0 else float('-inf')
+                # Calculate global episode number for logging
+                global_episode = agent.total_episodes * size  # Multiply by number of workers
                 
-                logger.info(f"Episode {agent.total_episodes}:")
+                logger.info(f"Global Episode {global_episode}:")
                 logger.info(f"  Average episode length: {avg_length:.1f}")
                 logger.info(f"  Average training reward: {avg_reward:.2f}")
                 logger.info(f"  Actor loss: {actor_loss:.4f}")
                 logger.info(f"  Critic loss: {critic_loss:.4f}")
-                if len(reward_window) > 0:
-                    logger.info(f"  Average reward (last {len(reward_window) * num_episodes_per_update}): {window_mean:.2f}")
             
-            if agent.total_episodes % eval_interval == 0 and rank == 0:
+            if (agent.total_episodes * size) % eval_interval == 0 and rank == 0:
                 eval_reward = agent.evaluate()
                 if rank == 0:  # Only rank 0 should append and log
                     eval_rewards.append(eval_reward)
@@ -588,16 +621,9 @@ def main():
                                           num_episodes_per_update, agent.run_dir)
                     logger.info(f"  Updated rewards plot saved as '{plot_path}'")
             
-            if agent.total_episodes % 200 == 0 and rank == 0:
+            if (agent.total_episodes * size) % 200 == 0 and rank == 0:
                 model_path = agent.save_model("_checkpoint")
                 logger.info(f"  Checkpoint saved: {model_path}")
-            
-            # Check solved condition only if window is not empty
-            if len(reward_window) > 0 and np.mean(reward_window) * num_episodes_per_update >= 200 and rank == 0:
-                logger.info("Environment solved!")
-                model_path = agent.save_model("_solved")
-                logger.info(f"  Solved model saved: {model_path}")
-                break
             
             agent.total_episodes += num_episodes_per_update
             

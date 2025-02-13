@@ -9,6 +9,9 @@ from collections import deque
 import os
 from datetime import datetime
 import logging
+import argparse
+import torch.nn.utils as nn_utils
+from mpi4py import MPI
 
 class GRUNetwork(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
@@ -37,10 +40,51 @@ class GRUNetwork(nn.Module):
         
         return action_logits, value, hidden
 
+def mpi_avg_grads(model):
+    """Average gradients across all MPI processes."""
+    size = float(MPI.COMM_WORLD.Get_size())
+    for param in model.parameters():
+        if param.grad is not None:
+            # Create input and output buffers
+            grad_numpy = param.grad.data.numpy()
+            buf = np.zeros_like(grad_numpy)
+            # Perform the reduction
+            MPI.COMM_WORLD.Allreduce(grad_numpy, buf, op=MPI.SUM)
+            # Update the gradient
+            param.grad.data = torch.from_numpy(buf / size)
+
+def mpi_avg(x):
+    """Average a float/numpy array across MPI processes."""
+    if not isinstance(x, np.ndarray):
+        x = np.array([x])
+    buf = np.zeros_like(x)
+    MPI.COMM_WORLD.Allreduce(x, buf, op=MPI.SUM)
+    result = buf / MPI.COMM_WORLD.Get_size()
+    # Return scalar if input was scalar
+    return float(result[0]) if len(result) == 1 else result
+
 class RL2PPO:
     def __init__(self, env_name, hidden_dim=128, lr=3e-4, gamma=0.99, epsilon=0.2, 
                  epochs=10, batch_size=64, render_mode=None, run_name=None):
-        self.env = gym.make(env_name, render_mode=render_mode)
+        # Initialize MPI
+        self.comm = MPI.COMM_WORLD
+        self.rank = self.comm.Get_rank()
+        self.size = self.comm.Get_size()
+        
+        # Only create directories on rank 0
+        if self.rank == 0:
+            os.makedirs('models', exist_ok=True)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            run_name = run_name or f'run_{timestamp}'
+            self.run_dir = os.path.join('models', run_name)
+            os.makedirs(self.run_dir, exist_ok=True)
+            self.checkpoint_dir = os.path.join(self.run_dir, 'checkpoints')
+            self.log_dir = os.path.join(self.run_dir, 'logs')
+            os.makedirs(self.checkpoint_dir, exist_ok=True)
+            os.makedirs(self.log_dir, exist_ok=True)
+        
+        # Create environment for each worker
+        self.env = gym.make(env_name, render_mode=render_mode if self.rank == 0 else None)
         self.input_dim = self.env.observation_space.shape[0]
         self.output_dim = self.env.action_space.n
         self.hidden_dim = hidden_dim
@@ -55,40 +99,33 @@ class RL2PPO:
         self.epochs = epochs
         self.batch_size = batch_size
         
-        # Create models directory if it doesn't exist
-        os.makedirs('models', exist_ok=True)
-        
-        # Use custom run name or timestamp
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        run_name = run_name or f'run_{timestamp}'
-        self.run_dir = os.path.join('models', run_name)
-        os.makedirs(self.run_dir, exist_ok=True)
-        
-        # Create subdirectories
-        self.checkpoint_dir = os.path.join(self.run_dir, 'checkpoints')
-        self.log_dir = os.path.join(self.run_dir, 'logs')
-        os.makedirs(self.checkpoint_dir, exist_ok=True)
-        os.makedirs(self.log_dir, exist_ok=True)
-        
         # Initialize training state
         self.total_episodes = 0
         self.training_rewards = []
         self.eval_rewards = []
         self.best_eval_reward = float('-inf')
         self.checkpoint_files = []
+        self.best_model_files = []
 
-    def save_model(self, suffix='', keep_last_n=None):
+    def save_model(self, suffix='', keep_last_n=5):
         """Save the model with a timestamp and optional suffix."""
+        if self.rank != 0:
+            return None
+            
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
-        # Determine the save directory based on suffix
+        # Determine the save directory and file list based on suffix
         if suffix == '_checkpoint':
             save_dir = self.checkpoint_dir
-            filename = f"{self.env_name}_{timestamp}{suffix}.pth"
+            file_list = self.checkpoint_files
+        elif suffix == '_best':
+            save_dir = self.run_dir
+            file_list = self.best_model_files
         else:
             save_dir = self.run_dir
-            filename = f"{self.env_name}_{timestamp}{suffix}.pth"
+            file_list = None  # Don't manage other types of saves
         
+        filename = f"{self.env_name}_{timestamp}{suffix}.pth"
         filepath = os.path.join(save_dir, filename)
         
         # Save model state along with relevant parameters and training history
@@ -108,13 +145,14 @@ class RL2PPO:
             'log_dir': self.log_dir
         }, filepath)
         
-        # Manage checkpoints if specified
-        if keep_last_n is not None and suffix == '_checkpoint':
-            self.checkpoint_files.append(filepath)
-            if len(self.checkpoint_files) > keep_last_n:
-                old_checkpoint = self.checkpoint_files.pop(0)
-                if os.path.exists(old_checkpoint):
-                    os.remove(old_checkpoint)
+        # Manage file history if specified
+        if file_list is not None:
+            file_list.append(filepath)
+            if len(file_list) > keep_last_n:
+                old_file = file_list.pop(0)
+                if os.path.exists(old_file):
+                    os.remove(old_file)
+                    print(f"Removed old file: {old_file}")
         
         print(f"Model saved to {filepath}")
         return filepath
@@ -302,14 +340,19 @@ class RL2PPO:
                 
                 self.optimizer.zero_grad()
                 loss.backward()
+                
+                # Synchronize gradients across workers
+                mpi_avg_grads(self.network)
+                
                 self.optimizer.step()
                 
                 total_actor_loss += actor_loss.item()
                 total_critic_loss += critic_loss.item()
                 num_updates += 1
         
-        avg_actor_loss = total_actor_loss / num_updates if num_updates > 0 else 0
-        avg_critic_loss = total_critic_loss / num_updates if num_updates > 0 else 0
+        # Average losses across workers
+        avg_actor_loss = mpi_avg(total_actor_loss / num_updates if num_updates > 0 else 0)
+        avg_critic_loss = mpi_avg(total_critic_loss / num_updates if num_updates > 0 else 0)
         return avg_actor_loss, avg_critic_loss
 
     def train_episode(self, num_episodes_per_update=4):
@@ -342,34 +385,50 @@ class RL2PPO:
         return avg_reward, avg_length, actor_loss, critic_loss
     
     def evaluate(self, num_episodes=10):
-        eval_rewards = []
-        
-        for _ in range(num_episodes):
-            state = self.env.reset()[0]
-            hidden = torch.zeros(1, 1, self.hidden_dim)
-            episode_reward = 0
-            done = False
+        """Evaluate the model's performance."""
+        # Only evaluate on rank 0
+        if self.rank == 0:
+            eval_rewards = []
             
-            while not done:
-                action, _, new_hidden = self.get_action(state, hidden)
-                state, reward, done, truncated, _ = self.env.step(action)
-                episode_reward += reward
-                hidden = new_hidden
-                done = done or truncated
+            for _ in range(num_episodes):
+                state = self.env.reset()[0]
+                hidden = torch.zeros(1, 1, self.hidden_dim)
+                episode_reward = 0
+                done = False
+                
+                while not done:
+                    action, _, new_hidden = self.get_action(state, hidden)
+                    state, reward, done, truncated, _ = self.env.step(action)
+                    episode_reward += reward
+                    hidden = new_hidden
+                    done = done or truncated
+                
+                eval_rewards.append(episode_reward)
             
-            eval_rewards.append(episode_reward)
-        
-        return np.mean(eval_rewards)
+            return np.mean(eval_rewards)
+        return 0.0
 
 def plot_rewards(training_rewards, eval_rewards, eval_interval, num_episodes_per_update, save_dir):
+    if len(training_rewards) == 0 or len(eval_rewards) == 0:
+        return None  # Don't create plot if no data
+        
     plt.figure(figsize=(12, 6))
     
+    # Plot training rewards
     training_episodes = [i * num_episodes_per_update for i in range(len(training_rewards))]
     plt.plot(training_episodes, training_rewards, 
              label='Training Rewards', alpha=0.6)
     
-    eval_episodes = [i for i in range(0, len(training_episodes) * num_episodes_per_update, eval_interval)]
+    # Calculate evaluation episodes correctly
+    eval_episodes = []
+    current_episode = 0
+    for _ in range(len(eval_rewards)):
+        eval_episodes.append(current_episode)
+        current_episode += eval_interval
+    
+    # Ensure eval_episodes and eval_rewards have the same length
     eval_episodes = eval_episodes[:len(eval_rewards)]
+    eval_rewards = eval_rewards[:len(eval_episodes)]
     
     plt.plot(eval_episodes, eval_rewards, 
              label='Evaluation Rewards', color='red', marker='o')
@@ -423,90 +482,118 @@ def main():
     
     args = parser.parse_args()
     
+    # Initialize MPI
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    
     env_name = "LunarLander-v2"
-    num_episodes = 1000
+    num_episodes = 10000
     eval_interval = 50
-    num_episodes_per_update = 4
+    num_episodes_per_update = 10
     num_checkpoints_to_keep = 5
     
-    render_mode = "human" if args.render else None
+    # Only render on rank 0
+    render_mode = "human" if args.render and rank == 0 else None
     
     if args.resume and args.model_path:
         agent = RL2PPO.load_model(args.model_path, render_mode=render_mode)
-        logger = setup_logger(agent.log_dir)
-        logger.info(f"Resuming training from {args.model_path}")
+        if rank == 0:
+            logger = setup_logger(agent.log_dir)
+            logger.info(f"Resuming training from {args.model_path}")
         num_episodes = max(num_episodes - agent.total_episodes, 0)
         training_rewards = agent.training_rewards
         eval_rewards = agent.eval_rewards
         best_eval_reward = agent.best_eval_reward
     else:
         agent = RL2PPO(env_name, render_mode=render_mode, run_name=args.run_name)
-        logger = setup_logger(agent.log_dir)
+        if rank == 0:
+            logger = setup_logger(agent.log_dir)
         training_rewards = []
         eval_rewards = []
         best_eval_reward = float('-inf')
     
     reward_window = deque(maxlen=100 // num_episodes_per_update)
     
-    logger.info("Starting training...")
-    logger.info("Initialization parameters:")
-    logger.info(f"  Environment: {env_name}")
-    logger.info(f"  Hidden dimension: {agent.hidden_dim}")
-    logger.info(f"  Learning rate: {agent.optimizer.param_groups[0]['lr']}")
-    logger.info(f"  Gamma (discount): {agent.gamma}")
-    logger.info(f"  Epsilon (clip): {agent.epsilon}")
-    logger.info(f"  PPO epochs: {agent.epochs}")
-    logger.info(f"  Batch size: {agent.batch_size}")
-    logger.info(f"  Run directory: {agent.run_dir}")
-    logger.info("\nTraining parameters:")
-    logger.info(f"  Total episodes: {num_episodes}")
-    logger.info(f"  Starting from episode: {agent.total_episodes}")
-    logger.info(f"  Episodes remaining: {num_episodes - agent.total_episodes}")
-    logger.info(f"  Evaluation interval: {eval_interval}")
-    logger.info(f"  Episodes per update: {num_episodes_per_update}")
-    logger.info(f"  Checkpoints to keep: {num_checkpoints_to_keep}")
-    logger.info(f"  Rendering: {args.render}")
-    logger.info("-" * 50)
+    if rank == 0:
+        logger.info(f"Starting training with {size} workers...")
+        logger.info("Initialization parameters:")
+        logger.info(f"  Environment: {env_name}")
+        logger.info(f"  Hidden dimension: {agent.hidden_dim}")
+        logger.info(f"  Learning rate: {agent.optimizer.param_groups[0]['lr']}")
+        logger.info(f"  Gamma (discount): {agent.gamma}")
+        logger.info(f"  Epsilon (clip): {agent.epsilon}")
+        logger.info(f"  PPO epochs: {agent.epochs}")
+        logger.info(f"  Batch size: {agent.batch_size}")
+        logger.info(f"  Run directory: {agent.run_dir}")
+        logger.info("\nTraining parameters:")
+        logger.info(f"  Total episodes: {num_episodes}")
+        logger.info(f"  Starting from episode: {agent.total_episodes}")
+        logger.info(f"  Episodes remaining: {num_episodes - agent.total_episodes}")
+        logger.info(f"  Evaluation interval: {eval_interval}")
+        logger.info(f"  Episodes per update: {num_episodes_per_update}")
+        logger.info(f"  Checkpoints to keep: {num_checkpoints_to_keep}")
+        logger.info(f"  Rendering: {args.render}")
+        logger.info("-" * 50)
     
     if not args.resume:
         eval_reward = agent.evaluate()
-        eval_rewards.append(eval_reward)
-        logger.info(f"Initial evaluation reward: {eval_reward:.2f}")
-        logger.info("-" * 50)
+        if rank == 0:  # Only rank 0 should append and log
+            eval_rewards.append(eval_reward)
+            logger.info(f"Initial evaluation reward: {eval_reward:.2f}")
+            logger.info("-" * 50)
     
     try:
         while agent.total_episodes < num_episodes:
             avg_reward, avg_length, actor_loss, critic_loss = agent.train_episode(num_episodes_per_update)
-            training_rewards.append(avg_reward)
-            reward_window.append(avg_reward)
             
-            agent.training_rewards = training_rewards
-            agent.eval_rewards = eval_rewards
-            agent.best_eval_reward = best_eval_reward
+            # Synchronize rewards and metrics across workers
+            avg_reward = float(mpi_avg(avg_reward))
+            avg_length = float(mpi_avg(avg_length))
+            actor_loss = float(mpi_avg(actor_loss))
+            critic_loss = float(mpi_avg(critic_loss))
             
-            logger.info(f"Episode {agent.total_episodes}:")
-            logger.info(f"  Average episode length: {avg_length:.1f}")
-            logger.info(f"  Average training reward: {avg_reward:.2f}")
-            logger.info(f"  Actor loss: {actor_loss:.4f}")
-            logger.info(f"  Critic loss: {critic_loss:.4f}")
-            logger.info(f"  Average reward (last {len(reward_window) * num_episodes_per_update}): {np.mean(reward_window):.2f}")
-            
-            if agent.total_episodes % eval_interval == 0:
-                eval_reward = agent.evaluate()
-                eval_rewards.append(eval_reward)
-                logger.info(f"  Evaluation reward: {eval_reward:.2f}")
-                logger.info("-" * 50)
+            if rank == 0:  # Only rank 0 should log
+                training_rewards.append(avg_reward)
+                reward_window.append(avg_reward)
                 
-                if eval_reward > best_eval_reward:
-                    best_eval_reward = eval_reward
-                    model_path = agent.save_model("_best")
-                    logger.info(f"  New best model saved: {model_path}")
+                agent.training_rewards = training_rewards
+                agent.eval_rewards = eval_rewards
+                agent.best_eval_reward = best_eval_reward
+                
+                # Calculate mean reward only if window is not empty
+                window_mean = np.mean(reward_window) if len(reward_window) > 0 else float('-inf')
+                
+                logger.info(f"Episode {agent.total_episodes}:")
+                logger.info(f"  Average episode length: {avg_length:.1f}")
+                logger.info(f"  Average training reward: {avg_reward:.2f}")
+                logger.info(f"  Actor loss: {actor_loss:.4f}")
+                logger.info(f"  Critic loss: {critic_loss:.4f}")
+                if len(reward_window) > 0:
+                    logger.info(f"  Average reward (last {len(reward_window) * num_episodes_per_update}): {window_mean:.2f}")
             
-            if agent.total_episodes % 200 == 0:
-                model_path = agent.save_model("_checkpoint", keep_last_n=num_checkpoints_to_keep)
+            if agent.total_episodes % eval_interval == 0 and rank == 0:
+                eval_reward = agent.evaluate()
+                if rank == 0:  # Only rank 0 should append and log
+                    eval_rewards.append(eval_reward)
+                    logger.info(f"  Evaluation reward: {eval_reward:.2f}")
+                    logger.info("-" * 50)
+                    
+                    if eval_reward > best_eval_reward:
+                        best_eval_reward = eval_reward
+                        model_path = agent.save_model("_best")
+                        logger.info(f"  New best model saved: {model_path}")
+                    
+                    plot_path = plot_rewards(training_rewards, eval_rewards, eval_interval, 
+                                          num_episodes_per_update, agent.run_dir)
+                    logger.info(f"  Updated rewards plot saved as '{plot_path}'")
+            
+            if agent.total_episodes % 200 == 0 and rank == 0:
+                model_path = agent.save_model("_checkpoint")
                 logger.info(f"  Checkpoint saved: {model_path}")
             
-            if np.mean(reward_window) * num_episodes_per_update >= 200:
+            # Check solved condition only if window is not empty
+            if len(reward_window) > 0 and np.mean(reward_window) * num_episodes_per_update >= 200 and rank == 0:
                 logger.info("Environment solved!")
                 model_path = agent.save_model("_solved")
                 logger.info(f"  Solved model saved: {model_path}")
@@ -515,16 +602,19 @@ def main():
             agent.total_episodes += num_episodes_per_update
             
     except KeyboardInterrupt:
-        logger.info("\nTraining interrupted by user!")
-        model_path = agent.save_model("_interrupted")
-        logger.info(f"Interrupted model saved: {model_path}")
+        if rank == 0:  # Only rank 0 should handle interruption
+            logger.info("\nTraining interrupted by user!")
+            model_path = agent.save_model("_interrupted")
+            logger.info(f"Interrupted model saved: {model_path}")
     
     finally:
-        model_path = agent.save_model("_final")
-        logger.info(f"Final model saved: {model_path}")
-        
-        plot_path = plot_rewards(training_rewards, eval_rewards, eval_interval, num_episodes_per_update, agent.run_dir)
-        logger.info(f"Training completed! Results plot saved as '{plot_path}'")
+        if rank == 0:  # Only rank 0 should handle cleanup
+            model_path = agent.save_model("_final")
+            logger.info(f"Final model saved: {model_path}")
+            
+            plot_path = plot_rewards(training_rewards, eval_rewards, eval_interval, 
+                                   num_episodes_per_update, agent.run_dir)
+            logger.info(f"Training completed! Results plot saved as '{plot_path}'")
 
 def evaluate_saved_model(model_path, num_episodes=10, render=True):
     print(f"Loading model from {model_path}")
@@ -532,22 +622,4 @@ def evaluate_saved_model(model_path, num_episodes=10, render=True):
     return agent.evaluate_model(num_episodes=num_episodes, render=render)
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description='Train or evaluate RL2-PPO on LunarLander')
-    parser.add_argument('--mode', choices=['train', 'evaluate'], default='train',
-                        help='Whether to train a new model or evaluate a saved one')
-    parser.add_argument('--model-path', type=str, help='Path to saved model for evaluation')
-    parser.add_argument('--episodes', type=int, default=10,
-                        help='Number of episodes for evaluation')
-    parser.add_argument('--render', action='store_true',
-                        help='Whether to render the environment during training/evaluation')
-    
-    args = parser.parse_args()
-    
-    if args.mode == 'train':
-        main()
-    else:
-        if args.model_path is None:
-            print("Please provide a model path for evaluation using --model-path")
-        else:
-            evaluate_saved_model(args.model_path, args.episodes, args.render) 
+    main() 

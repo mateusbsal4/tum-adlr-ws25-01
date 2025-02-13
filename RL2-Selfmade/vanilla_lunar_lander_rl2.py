@@ -12,7 +12,6 @@ import logging
 import argparse
 import torch.nn.utils as nn_utils
 from mpi4py import MPI
-from custom_lunar_lander import CustomLunarLander
 
 class GRUNetwork(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
@@ -84,11 +83,8 @@ class RL2PPO:
             os.makedirs(self.checkpoint_dir, exist_ok=True)
             os.makedirs(self.log_dir, exist_ok=True)
         
-        # Create custom environment for each worker
-        if env_name == "CustomLunarLander-v2":
-            self.env = CustomLunarLander(render_mode=render_mode if self.rank == 0 else None)
-        else:
-            self.env = gym.make(env_name, render_mode=render_mode if self.rank == 0 else None)
+        # Create environment for each worker
+        self.env = gym.make(env_name, render_mode=render_mode if self.rank == 0 else None)
         self.input_dim = self.env.observation_space.shape[0]
         self.output_dim = self.env.action_space.n
         self.hidden_dim = hidden_dim
@@ -360,12 +356,6 @@ class RL2PPO:
         return avg_actor_loss, avg_critic_loss
 
     def train_episode(self, num_episodes_per_update=4):
-        # Set random target position for this update
-        if isinstance(self.env, CustomLunarLander):
-            new_target = np.random.uniform(0.1, 0.9)  # Slightly inside boundaries
-            self.env.set_target_position(new_target)
-            print(f"New target position: {new_target:.3f}")
-        
         total_reward = 0
         total_length = 0
         
@@ -394,37 +384,29 @@ class RL2PPO:
         
         return avg_reward, avg_length, actor_loss, critic_loss
     
-    def evaluate(self, num_episodes=1):
-        """Evaluate the current policy without training."""
-        if self.rank != 0:  # Only rank 0 evaluates
-            return 0.0
-        
-        total_reward = 0
-        
-        # Use center position for evaluation
-        if isinstance(self.env, CustomLunarLander):
-            self.env.set_target_position(0.0)
-        
-        for _ in range(num_episodes):
-            state = self.env.reset()[0]
-            done = False
-            truncated = False
-            episode_reward = 0
-            hidden = None
+    def evaluate(self, num_episodes=10):
+        """Evaluate the model's performance."""
+        # Only evaluate on rank 0
+        if self.rank == 0:
+            eval_rewards = []
             
-            while not (done or truncated):
-                state_tensor = torch.FloatTensor(state).unsqueeze(0).unsqueeze(0)
-                with torch.no_grad():
-                    action_logits, _, hidden = self.network(state_tensor, hidden)
-                    action_probs = torch.softmax(action_logits, dim=-1)
-                    action = torch.argmax(action_probs).item()
+            for _ in range(num_episodes):
+                state = self.env.reset()[0]
+                hidden = torch.zeros(1, 1, self.hidden_dim)
+                episode_reward = 0
+                done = False
                 
-                state, reward, done, truncated, _ = self.env.step(action)
-                episode_reward += reward
+                while not done:
+                    action, _, new_hidden = self.get_action(state, hidden)
+                    state, reward, done, truncated, _ = self.env.step(action)
+                    episode_reward += reward
+                    hidden = new_hidden
+                    done = done or truncated
+                
+                eval_rewards.append(episode_reward)
             
-            total_reward += episode_reward
-        
-        return total_reward / num_episodes
+            return np.mean(eval_rewards)
+        return 0.0
 
 def plot_rewards(training_rewards, eval_rewards, eval_interval, num_episodes_per_update, save_dir):
     if len(training_rewards) == 0 or len(eval_rewards) == 0:
@@ -527,7 +509,7 @@ def main():
     rank = comm.Get_rank()
     size = comm.Get_size()
     
-    env_name = "CustomLunarLander-v2"  # Use custom environment
+    env_name = "LunarLander-v2"
     num_episodes = 10000  # This is now the total episodes across all workers
     eval_interval = 50
     num_episodes_per_update = 10

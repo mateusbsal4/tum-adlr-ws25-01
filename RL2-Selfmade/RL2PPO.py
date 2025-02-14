@@ -11,6 +11,8 @@ from datetime import datetime
 import torch.nn.utils as nn_utils
 from mpi4py import MPI
 from custom_lunar_lander import CustomLunarLander
+import re
+import warnings
 
 def mpi_avg_grads(model):
     """Average gradients across all MPI processes."""
@@ -36,7 +38,7 @@ def mpi_avg(x):
     return float(result[0]) if len(result) == 1 else result
 
 class RL2PPO:
-    def __init__(self, env_name, hidden_dim=128, lr=3e-4, gamma=0.99, epsilon=0.2, 
+    def __init__(self, env_name="CustomLunarLander-v2", hidden_dim=128, lr=3e-4, gamma=0.99, epsilon=0.2, 
                  epochs=10, batch_size=64, render_mode=None, run_name=None):
         # Initialize MPI
         self.comm = MPI.COMM_WORLD
@@ -83,24 +85,28 @@ class RL2PPO:
         self.best_model_files = []
 
     def save_model(self, suffix='', keep_last_n=5):
-        """Save the model with a timestamp and optional suffix."""
+        """Save the model with update steps count and optional suffix."""
         if self.rank != 0:
             return None
-            
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # Calculate update steps (total_episodes / episodes_per_update)
+        update_steps = self.total_episodes // 4  # assuming num_episodes_per_update=4
         
         # Determine the save directory and file list based on suffix
         if suffix == '_checkpoint':
             save_dir = self.checkpoint_dir
             file_list = self.checkpoint_files
+            filename = f"{self.env_name}_step{update_steps}{suffix}.pth"
         elif suffix == '_best':
-            save_dir = self.run_dir
+            save_dir = os.path.join(self.run_dir, 'best_models')
+            os.makedirs(save_dir, exist_ok=True)
             file_list = self.best_model_files
+            filename = f"{self.env_name}_step{update_steps}_reward{self.best_eval_reward:.0f}.pth"
         else:
             save_dir = self.run_dir
             file_list = None  # Don't manage other types of saves
+            filename = f"{self.env_name}_step{update_steps}{suffix}.pth"
         
-        filename = f"{self.env_name}_{timestamp}{suffix}.pth"
         filepath = os.path.join(save_dir, filename)
         
         # Save model state along with relevant parameters and training history
@@ -112,6 +118,7 @@ class RL2PPO:
             'output_dim': self.output_dim,
             'env_name': self.env_name,
             'total_episodes': self.total_episodes,
+            'update_steps': update_steps,
             'training_rewards': self.training_rewards,
             'eval_rewards': self.eval_rewards,
             'best_eval_reward': self.best_eval_reward,
@@ -124,10 +131,13 @@ class RL2PPO:
         if file_list is not None:
             file_list.append(filepath)
             if len(file_list) > keep_last_n:
-                old_file = file_list.pop(0)
-                if os.path.exists(old_file):
-                    os.remove(old_file)
-                    print(f"Removed old file: {old_file}")
+                # Sort files by update step number for proper cleanup
+                file_list.sort(key=lambda x: int(re.search(r'step(\d+)', x).group(1)))
+                while len(file_list) > keep_last_n:
+                    old_file = file_list.pop(0)  # Remove oldest file
+                    if os.path.exists(old_file):
+                        os.remove(old_file)
+                        print(f"Removed old file: {old_file}")
         
         print(f"Model saved to {filepath}")
         return filepath
@@ -135,8 +145,11 @@ class RL2PPO:
     @classmethod
     def load_model(cls, model_path, render_mode=None):
         """Load a saved model and return an initialized RL2PPO instance."""
-        # Load the saved state
-        checkpoint = torch.load(model_path)
+        # Temporarily suppress the FutureWarning
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=FutureWarning)
+            # Load the saved state
+            checkpoint = torch.load(model_path)
         
         # Create a new instance with the saved parameters
         instance = cls(
@@ -163,45 +176,70 @@ class RL2PPO:
         
         return instance
 
-    def evaluate_model(self, num_episodes=10, render=False):
-        """Evaluate the model with optional rendering."""
+    def evaluate(self, num_episodes=1, render=False, max_steps=1000):
+        """Evaluate the current policy."""
+        if self.rank != 0:  # Only rank 0 evaluates
+            return 0.0
+        
+        # Use evaluation environment if rendering
         if render:
-            env = gym.make(self.env_name, render_mode="human")
+            if isinstance(self.env, CustomLunarLander):
+                env = CustomLunarLander(render_mode="human")
+            else:
+                env = gym.make(self.env_name, render_mode="human")
         else:
             env = self.env
         
-        eval_rewards = []
+        total_reward = 0
         episode_lengths = []
         
+        print(f"\nStarting evaluation over {num_episodes} episodes...")
+        
         for episode in range(num_episodes):
+            # Set new random target for each evaluation episode
+            if isinstance(env, CustomLunarLander):
+                new_target = np.random.uniform(0.1, 0.9)
+                env.set_target_position(new_target)
+                print(f"\nEvaluation episode {episode + 1}, target: {new_target:.3f}")
+            
             state = env.reset()[0]
-            hidden = torch.zeros(1, 1, self.hidden_dim)
+            done = False
+            truncated = False
             episode_reward = 0
             episode_length = 0
-            done = False
+            hidden = torch.zeros(1, 1, self.hidden_dim)  # Initialize hidden state
             
-            while not done:
-                action, _, new_hidden = self.get_action(state, hidden)
-                state, reward, done, truncated, _ = env.step(action)
+            for step in range(max_steps):
+                state_tensor = torch.FloatTensor(state).unsqueeze(0).unsqueeze(0)
+                with torch.no_grad():
+                    action_logits, _, hidden = self.network(state_tensor, hidden)
+                    action_probs = torch.softmax(action_logits, dim=-1)
+                    action = torch.argmax(action_probs).item()
+                
+                state, reward, done, truncated, info = env.step(action)
                 episode_reward += reward
-                hidden = new_hidden
-                done = done or truncated
                 episode_length += 1
+                
+                if done or truncated:
+                    break
+                
+                if step == max_steps - 1:
+                    print(f"Episode {episode + 1} reached max steps limit ({max_steps})")
             
-            eval_rewards.append(episode_reward)
+            total_reward += episode_reward
             episode_lengths.append(episode_length)
-            
             print(f"Episode {episode + 1}: Reward = {episode_reward:.2f}, Length = {episode_length}")
         
-        mean_reward = np.mean(eval_rewards)
-        std_reward = np.std(eval_rewards)
+        mean_reward = total_reward / num_episodes
         mean_length = np.mean(episode_lengths)
-        
-        print("\nEvaluation Results:")
-        print(f"Mean Reward: {mean_reward:.2f} ± {std_reward:.2f}")
+        print(f"\nEvaluation Results:")
+        print(f"Mean Reward: {mean_reward:.2f}")
         print(f"Mean Episode Length: {mean_length:.1f}")
         
-        return mean_reward, std_reward, mean_length
+        if render:
+            env.close()
+        
+        return mean_reward
 
     def get_action(self, state, hidden):
         state = torch.FloatTensor(state).unsqueeze(0).unsqueeze(0)
@@ -365,39 +403,11 @@ class RL2PPO:
         
         return avg_reward, avg_length, actor_loss, critic_loss
     
-    def evaluate(self, num_episodes=1):
-        """Evaluate the current policy without training."""
-        if self.rank != 0:  # Only rank 0 evaluates
-            return 0.0
-        
-        total_reward = 0
-        
-        # Use center position for evaluation
-        if isinstance(self.env, CustomLunarLander):
-            self.env.set_target_position(0.0)
-        
-        for _ in range(num_episodes):
-            state = self.env.reset()[0]
-            done = False
-            truncated = False
-            episode_reward = 0
-            hidden = None
-            
-            while not (done or truncated):
-                state_tensor = torch.FloatTensor(state).unsqueeze(0).unsqueeze(0)
-                with torch.no_grad():
-                    action_logits, _, hidden = self.network(state_tensor, hidden)
-                    action_probs = torch.softmax(action_logits, dim=-1)
-                    action = torch.argmax(action_probs).item()
-                
-                state, reward, done, truncated, _ = self.env.step(action)
-                episode_reward += reward
-            
-            total_reward += episode_reward
-        
-        return total_reward / num_episodes
-    
-    
+    def evaluate_saved_model(self, model_path, num_episodes=10, render=True):
+        print(f"Loading model from {model_path}")
+        agent = RL2PPO.load_model(model_path)
+        return agent.evaluate(num_episodes=num_episodes, render=render)
+
 class GRUNetwork(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
         super(GRUNetwork, self).__init__()

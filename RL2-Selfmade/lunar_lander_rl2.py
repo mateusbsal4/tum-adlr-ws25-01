@@ -14,6 +14,7 @@ import torch.nn.utils as nn_utils
 from mpi4py import MPI
 from RL2PPO import RL2PPO
 from RL2PPO import mpi_avg
+import re
 
 def plot_rewards(training_rewards, eval_rewards, eval_interval, num_episodes_per_update, save_dir):
     if len(training_rewards) == 0 or len(eval_rewards) == 0:
@@ -74,40 +75,36 @@ def setup_logger(log_dir):
     return logger
 
 def find_latest_model(run_dir):
-    """Find the latest model file in the run directory."""
-    if not os.path.exists(run_dir):
-        return None
-        
+    """Find the latest model file by step number in the run directory."""
     model_files = []
-    # Look in main run directory and checkpoints subdirectory
-    for root in [run_dir, os.path.join(run_dir, 'checkpoints')]:
-        if os.path.exists(root):
-            for file in os.listdir(root):
+    
+    # Look in all relevant directories
+    for subdir in ['', 'checkpoints', 'best_models']:
+        dir_path = os.path.join(run_dir, subdir)
+        if os.path.exists(dir_path):
+            for file in os.listdir(dir_path):
                 if file.endswith('.pth'):
-                    full_path = os.path.join(root, file)
-                    model_files.append((os.path.getmtime(full_path), full_path))
+                    full_path = os.path.join(dir_path, file)
+                    # Extract step number from filename
+                    step_match = re.search(r'step(\d+)', file)
+                    if step_match:
+                        step_num = int(step_match.group(1))
+                        model_files.append((step_num, full_path))
     
     if not model_files:
         return None
         
-    # Return the most recent file
-    return sorted(model_files, key=lambda x: x[0])[-1][1]
+    # Return the file with the highest step number
+    return max(model_files, key=lambda x: x[0])[1]
 
 def main():
     parser = argparse.ArgumentParser(description='Train or evaluate RL2-PPO on LunarLander')
     parser.add_argument('--mode', choices=['train', 'evaluate'], default='train',
                         help='Whether to train a new model or evaluate a saved one')
-    parser.add_argument('--model-path', type=str, help='Path to saved model for evaluation or resuming training')
-    parser.add_argument('--episodes', type=int, default=10,
-                        help='Number of episodes for evaluation')
+    parser.add_argument('--run-name', type=str, required=True,
+                       help='Name for the training run directory')
     parser.add_argument('--render', action='store_true',
                         help='Whether to render the environment during training/evaluation')
-    parser.add_argument('--resume', action='store_true',
-                        help='Resume training from a saved model')
-    parser.add_argument('--run-name', type=str, default=None,
-                        help='Custom name for the training run directory')
-    parser.add_argument('--resume-from', type=str, default=None,
-                       help='Resume training from the latest model in specified run directory')
     
     args = parser.parse_args()
     
@@ -116,44 +113,67 @@ def main():
     rank = comm.Get_rank()
     size = comm.Get_size()
     
-    env_name = "CustomLunarLander-v2"  # Use custom environment
-    num_episodes = 10000  # This is now the total episodes across all workers
+    # Check if run directory exists and has models
+    run_dir = os.path.join('models', args.run_name)
+    
+    if args.mode == 'evaluate':
+        if os.path.exists(run_dir):
+            latest_model = find_latest_model(run_dir)
+            if latest_model:
+                if rank == 0:
+                    print(f"Evaluating the latest model: {latest_model}")
+                    evaluate_saved_model(latest_model, render=args.render)
+                return
+            else:
+                if rank == 0:
+                    print("No model found in the specified run directory.")
+                return
+        else:
+            if rank == 0:
+                print("Specified run directory does not exist.")
+            return
+    
+    latest_model = None
+    if os.path.exists(run_dir):
+        latest_model = find_latest_model(run_dir)
+        if latest_model and rank == 0:
+            print(f"Found existing run directory with models.")
+            print(f"Latest model: {latest_model}")
+            response = input("Resume training from this model? [Y/n]: ").lower()
+            if response in ['', 'y', 'yes']:
+                if rank == 0:
+                    print(f"Resuming from {latest_model}")
+            else:
+                if rank == 0:
+                    print("Starting fresh training run")
+                latest_model = None
+    
+    env_name = "CustomLunarLander-v2"
+    num_episodes = 1_000_000
     eval_interval = 50
     num_episodes_per_update = 10
     num_checkpoints_to_keep = 5
     
-    # Calculate episodes per worker
-    episodes_per_worker = num_episodes // size
-    if rank == size - 1:  # Last worker gets any remaining episodes
-        episodes_per_worker += num_episodes % size
-    
     # Only render on rank 0
     render_mode = "human" if args.render and rank == 0 else None
     
-    if args.resume_from:
-        # Find the latest model in the specified run directory
-        run_dir = os.path.join('models', args.resume_from)
-        latest_model = find_latest_model(run_dir)
-        
-        if latest_model is None and rank == 0:
-            print(f"No model files found in {run_dir}")
-            return
-            
+    if latest_model:
         agent = RL2PPO.load_model(latest_model, render_mode=render_mode)
         if rank == 0:
             logger = setup_logger(agent.log_dir)
             logger.info(f"Resuming training from {latest_model}")
-        num_episodes = max(num_episodes - agent.total_episodes, 0)
-        training_rewards = agent.training_rewards
-        eval_rewards = agent.eval_rewards
-        best_eval_reward = agent.best_eval_reward
+            # Get existing rewards history from loaded agent
+            training_rewards = agent.training_rewards
+            eval_rewards = agent.eval_rewards
+            best_eval_reward = agent.best_eval_reward
     else:
         agent = RL2PPO(env_name, render_mode=render_mode, run_name=args.run_name)
         if rank == 0:
             logger = setup_logger(agent.log_dir)
-        training_rewards = []
-        eval_rewards = []
-        best_eval_reward = float('-inf')
+            # Initialize empty rewards history for new run
+            training_rewards = []
+            eval_rewards = []
+            best_eval_reward = float('-inf')
     
     reward_window = deque(maxlen=100 // num_episodes_per_update)
     
@@ -178,10 +198,9 @@ def main():
         logger.info(f"  Rendering: {args.render}")
         logger.info("-" * 50)
     
-    if not args.resume:
+    if not latest_model:
         eval_reward = agent.evaluate()
         if rank == 0:  # Only rank 0 should append and log
-            eval_rewards.append(eval_reward)
             logger.info(f"Initial evaluation reward: {eval_reward:.2f}")
             logger.info("-" * 50)
     
@@ -202,11 +221,11 @@ def main():
             if rank == 0:  # Only rank 0 should log
                 training_rewards.append(avg_reward)
                 reward_window.append(avg_reward)
-                
+            
                 agent.training_rewards = training_rewards
                 agent.eval_rewards = eval_rewards
                 agent.best_eval_reward = best_eval_reward
-                
+            
                 logger.info(f"Global Episode {global_episode}:")
                 logger.info(f"  Average episode length: {avg_length:.1f}")
                 logger.info(f"  Average training reward: {avg_reward:.2f}")
@@ -220,12 +239,12 @@ def main():
                     eval_rewards.append(eval_reward)
                     logger.info(f"  Evaluation reward: {eval_reward:.2f}")
                     logger.info("-" * 50)
-                    
+                
                     if eval_reward > best_eval_reward:
                         best_eval_reward = eval_reward
                         model_path = agent.save_model("_best")
                         logger.info(f"  New best model saved: {model_path}")
-                    
+                
                     plot_path = plot_rewards(training_rewards, eval_rewards, eval_interval, 
                                           num_episodes_per_update, agent.run_dir)
                     logger.info(f"  Updated rewards plot saved as '{plot_path}'")
@@ -251,10 +270,10 @@ def main():
                                    num_episodes_per_update, agent.run_dir)
             logger.info(f"Training completed! Results plot saved as '{plot_path}'")
 
-def evaluate_saved_model(model_path, num_episodes=10, render=True):
+def evaluate_saved_model(model_path, num_episodes=10, render=True, max_steps=1000):
     print(f"Loading model from {model_path}")
     agent = RL2PPO.load_model(model_path)
-    return agent.evaluate_model(num_episodes=num_episodes, render=render)
+    return agent.evaluate(num_episodes=num_episodes, render=render, max_steps=max_steps)
 
 if __name__ == "__main__":
-    main() 
+    main()

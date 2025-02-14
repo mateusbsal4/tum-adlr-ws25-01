@@ -18,18 +18,23 @@ def list_log_files(run_name):
 
 def select_log_file(log_files):
     """Let user select a log file from the list."""
-    print("\nAvailable log files:")
-    for i, file in enumerate(log_files):
-        print(f"[{i}] {file}")
+    if len(log_files) == 0:
+        raise ValueError("No log files found")
+    elif len(log_files) == 1:
+        return log_files[0]
+    else: 
+        print("\nAvailable log files:")
+        for i, file in enumerate(log_files):
+            print(f"[{i}] {file}")
     
-    while True:
-        try:
-            choice = int(input("\nSelect a file number to plot: "))
-            if 0 <= choice < len(log_files):
-                return log_files[choice]
-            print("Invalid selection. Please try again.")
-        except ValueError:
-            print("Please enter a valid number.")
+        while True:
+            try:
+                choice = int(input("\nSelect a file number to plot: "))
+                if 0 <= choice < len(log_files):
+                    return log_files[choice]
+                print("Invalid selection. Please try again.")
+            except ValueError:
+                print("Please enter a valid number.")
 
 def extract_metrics_from_log(log_file):
     episodes = []

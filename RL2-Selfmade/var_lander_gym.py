@@ -229,8 +229,6 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         enable_wind: bool = False,
         wind_power: float = 15.0,
         turbulence_power: float = 1.0,
-        target_x: float = 0.0,
-        target_y: float = 0.0
     ):
         # ---------------------------------------------------------------------------------------
         # Initialize EzPickle to allow this environment to be easily pickled/unpickled.
@@ -243,8 +241,6 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             enable_wind,
             wind_power,
             turbulence_power,
-            target_x,
-            target_y
         )
 
         # ---------------------------------------------------------------------------------------
@@ -274,8 +270,8 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         # ---------------------------------------------------------------------------------------
         # Target position for the lander to aim for (instead of always landing at (0,0)).
         # This is a custom extension to make the landing pad location flexible.
-        self.target_x = target_x
-        self.target_y = target_y
+        self.target_x = None
+        self.target_y = None
 
         # ---------------------------------------------------------------------------------------
         # Whether wind effects are enabled in the environment.
@@ -729,7 +725,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         #  7) right leg contact (0 or 1)
         state = [
             # original reward for target position 0,0
-            (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2),                    # normalized X distance 
+            (pos.x - self.helipad_x) / (VIEWPORT_W / SCALE / 2),                    # normalized X distance 
             (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2),       # normalized Y distance
             vel.x * (VIEWPORT_W / SCALE / 2) / FPS,
             vel.y * (VIEWPORT_H / SCALE / 2) / FPS,

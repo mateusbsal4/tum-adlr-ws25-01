@@ -729,7 +729,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         #  7) right leg contact (0 or 1)
         state = [
             # original reward for target position 0,0
-            (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2),                    # normalized X distance 
+            (pos.x - self.helipad_x) / (VIEWPORT_W / SCALE / 2),                    # normalized X distance 
             (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2),       # normalized Y distance
             vel.x * (VIEWPORT_W / SCALE / 2) / FPS,
             vel.y * (VIEWPORT_H / SCALE / 2) / FPS,
@@ -954,4 +954,3 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             pygame.display.quit()
             pygame.quit()
             self.isopen = False
-

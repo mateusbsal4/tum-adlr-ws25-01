@@ -15,12 +15,11 @@ from Box2D.b2 import (
 class CustomLunarLander(LunarLanderTargetPos):
     def __init__(self, render_mode=None):
         super().__init__(render_mode=render_mode)
-        self.target_x = 0.0  # Default target position (center)
-    
+        self.target_x = 0.5  # Default target position (center)
     def set_target_position(self, x_position):
         """Set new target landing position (-1 to 1 range)"""
         # Clamp the position to valid range
-        self.target_x = np.clip(x_position, -0.8, 0.8)  # Slightly inside boundaries
+        self.target_x = np.clip(x_position, 0.1, 0.9)  # Slightly inside boundaries
         # Reset the environment with new target
         self.reset()
     

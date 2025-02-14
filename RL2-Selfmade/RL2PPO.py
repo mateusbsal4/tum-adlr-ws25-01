@@ -19,12 +19,9 @@ def mpi_avg_grads(model):
     size = float(MPI.COMM_WORLD.Get_size())
     for param in model.parameters():
         if param.grad is not None:
-            # Create input and output buffers
             grad_numpy = param.grad.data.numpy()
             buf = np.zeros_like(grad_numpy)
-            # Perform the reduction
             MPI.COMM_WORLD.Allreduce(grad_numpy, buf, op=MPI.SUM)
-            # Update the gradient
             param.grad.data = torch.from_numpy(buf / size)
 
 def mpi_avg(x):
@@ -34,7 +31,6 @@ def mpi_avg(x):
     buf = np.zeros_like(x)
     MPI.COMM_WORLD.Allreduce(x, buf, op=MPI.SUM)
     result = buf / MPI.COMM_WORLD.Get_size()
-    # Return scalar if input was scalar
     return float(result[0]) if len(result) == 1 else result
 
 class RL2PPO:
@@ -62,7 +58,10 @@ class RL2PPO:
             self.env = CustomLunarLander(render_mode=render_mode if self.rank == 0 else None)
         else:
             self.env = gym.make(env_name, render_mode=render_mode if self.rank == 0 else None)
-        self.input_dim = self.env.observation_space.shape[0]
+        
+        # New input: concatenation of next state, one-hot action, reward, termination flag.
+        self.input_dim = self.env.observation_space.shape[0] + self.env.action_space.n + 2  
+        # self.input_dim = self.env.observation_space.shape[0]  # (old)
         self.output_dim = self.env.action_space.n
         self.hidden_dim = hidden_dim
         self.env_name = env_name
@@ -85,14 +84,9 @@ class RL2PPO:
         self.best_model_files = []
 
     def save_model(self, suffix='', keep_last_n=5):
-        """Save the model with update steps count and optional suffix."""
         if self.rank != 0:
             return None
-        
-        # Calculate update steps (total_episodes / episodes_per_update)
         update_steps = self.total_episodes // 4  # assuming num_episodes_per_update=4
-        
-        # Determine the save directory and file list based on suffix
         if suffix == '_checkpoint':
             save_dir = self.checkpoint_dir
             file_list = self.checkpoint_files
@@ -104,12 +98,10 @@ class RL2PPO:
             filename = f"{self.env_name}_step{update_steps}_reward{self.best_eval_reward:.0f}.pth"
         else:
             save_dir = self.run_dir
-            file_list = None  # Don't manage other types of saves
+            file_list = None
             filename = f"{self.env_name}_step{update_steps}{suffix}.pth"
         
         filepath = os.path.join(save_dir, filename)
-        
-        # Save model state along with relevant parameters and training history
         torch.save({
             'network_state_dict': self.network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
@@ -127,14 +119,12 @@ class RL2PPO:
             'log_dir': self.log_dir
         }, filepath)
         
-        # Manage file history if specified
         if file_list is not None:
             file_list.append(filepath)
             if len(file_list) > keep_last_n:
-                # Sort files by update step number for proper cleanup
                 file_list.sort(key=lambda x: int(re.search(r'step(\d+)', x).group(1)))
                 while len(file_list) > keep_last_n:
-                    old_file = file_list.pop(0)  # Remove oldest file
+                    old_file = file_list.pop(0)
                     if os.path.exists(old_file):
                         os.remove(old_file)
                         print(f"Removed old file: {old_file}")
@@ -144,31 +134,24 @@ class RL2PPO:
 
     @classmethod
     def load_model(cls, model_path, render_mode=None):
-        """Load a saved model and return an initialized RL2PPO instance."""
-        # Temporarily suppress the FutureWarning
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=FutureWarning)
-            # Load the saved state
             checkpoint = torch.load(model_path)
         
-        # Create a new instance with the saved parameters
         instance = cls(
             env_name=checkpoint['env_name'],
             hidden_dim=checkpoint['hidden_dim'],
             render_mode=render_mode
         )
         
-        # Load the saved state dictionaries
         instance.network.load_state_dict(checkpoint['network_state_dict'])
         instance.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         
-        # Load training history if available
         instance.total_episodes = checkpoint.get('total_episodes', 0)
         instance.training_rewards = checkpoint.get('training_rewards', [])
         instance.eval_rewards = checkpoint.get('eval_rewards', [])
         instance.best_eval_reward = checkpoint.get('best_eval_reward', float('-inf'))
         
-        # Restore directories if available
         if 'run_dir' in checkpoint:
             instance.run_dir = checkpoint['run_dir']
             instance.checkpoint_dir = checkpoint['checkpoint_dir']
@@ -177,11 +160,8 @@ class RL2PPO:
         return instance
 
     def evaluate(self, num_episodes=1, render=False, max_steps=1000):
-        """Evaluate the current policy."""
-        if self.rank != 0:  # Only rank 0 evaluates
+        if self.rank != 0:
             return 0.0
-        
-        # Use evaluation environment if rendering
         if render:
             if isinstance(self.env, CustomLunarLander):
                 env = CustomLunarLander(render_mode="human")
@@ -196,29 +176,36 @@ class RL2PPO:
         print(f"\nStarting evaluation over {num_episodes} episodes...")
         
         for episode in range(num_episodes):
-            # Set new random target for each evaluation episode
             if isinstance(env, CustomLunarLander):
                 new_target = np.random.uniform(0.1, 0.9)
                 env.set_target_position(new_target)
                 print(f"\nEvaluation episode {episode + 1}, target: {new_target:.3f}")
             
-            state = env.reset()[0]
-            done = False
-            truncated = False
+            # Get the initial observation and initialize the policy input to zeros.
+            obs = env.reset()[0]
+            hidden = torch.zeros(1, 1, self.hidden_dim)
+            # Initialize the policy input as the observation concatenated with zeros for (action, reward, done)
+            policy_input = np.concatenate([obs, np.zeros(self.env.action_space.n + 2)])
             episode_reward = 0
             episode_length = 0
-            hidden = torch.zeros(1, 1, self.hidden_dim)  # Initialize hidden state
             
             for step in range(max_steps):
-                state_tensor = torch.FloatTensor(state).unsqueeze(0).unsqueeze(0)
+                # Convert the current policy input to tensor and get action.
+                inp_tensor = torch.FloatTensor(policy_input).unsqueeze(0).unsqueeze(0)
                 with torch.no_grad():
-                    action_logits, _, hidden = self.network(state_tensor, hidden)
+                    action_logits, _, hidden = self.network(inp_tensor, hidden)
                     action_probs = torch.softmax(action_logits, dim=-1)
                     action = torch.argmax(action_probs).item()
                 
-                state, reward, done, truncated, info = env.step(action)
+                next_obs, reward, done, truncated, info = env.step(action)
                 episode_reward += reward
                 episode_length += 1
+                
+                # Create the new policy input: concat(next_obs, one-hot(action), reward, done flag)
+                one_hot = np.zeros(self.env.action_space.n)
+                one_hot[action] = 1
+                done_flag = float(done or truncated)
+                policy_input = np.concatenate([next_obs, one_hot, np.array([reward, done_flag])])
                 
                 if done or truncated:
                     break
@@ -241,10 +228,11 @@ class RL2PPO:
         
         return mean_reward
 
-    def get_action(self, state, hidden):
-        state = torch.FloatTensor(state).unsqueeze(0).unsqueeze(0)
+    def get_action(self, policy_input, hidden):
+        # Convert the policy input vector to tensor (unsqueezed for seq and batch dims)
+        inp = torch.FloatTensor(policy_input).unsqueeze(0).unsqueeze(0)
         with torch.no_grad():
-            action_logits, _, new_hidden = self.network(state, hidden)
+            action_logits, _, new_hidden = self.network(inp, hidden)
         
         dist = Categorical(logits=action_logits.squeeze())
         action = dist.sample()
@@ -255,87 +243,100 @@ class RL2PPO:
     def compute_returns(self, rewards, dones, values):
         returns = []
         running_return = 0
-        
         for r, d, v in zip(reversed(rewards), reversed(dones), reversed(values)):
             running_return = r + self.gamma * running_return * (1 - d)
             returns.insert(0, running_return)
-            
         returns = torch.FloatTensor(returns)
         returns = (returns - returns.mean()) / (returns.std() + 1e-8)
         return returns
     
     def collect_episode(self, max_steps=1000):
-        state = self.env.reset()[0]
+        # Get the initial observation (although not directly used in the input)
+        obs = self.env.reset()[0]
         hidden = torch.zeros(1, 1, self.hidden_dim)
+        # Initialize the policy input as the observation concatenated with zeros for (action, reward, done)
+        policy_input = np.concatenate([obs, np.zeros(self.env.action_space.n + 2)])
         
-        states, actions, rewards, log_probs, dones, values = [], [], [], [], [], []
+        # Lists to store trajectories (inputs, actions, etc.)
+        inputs = []      # will store the policy inputs fed into the network
+        actions = []
+        rewards = []
+        log_probs = []
+        dones = []
+        values = []
         episode_reward = 0
         
         for _ in range(max_steps):
             if self.render_mode == "human":
                 self.env.render()
                 
-            action, log_prob, new_hidden = self.get_action(state, hidden)
-            next_state, reward, done, truncated, _ = self.env.step(action)
+            action, log_prob, new_hidden = self.get_action(policy_input, hidden)
             
-            states.append(state)
+            next_obs, reward, done, truncated, _ = self.env.step(action)
+            
+            # Record the current policy input along with action, reward, etc.
+            inputs.append(policy_input)
             actions.append(action)
             rewards.append(reward)
             log_probs.append(log_prob)
             dones.append(done or truncated)
             
+            # Get the value estimate for the current step.
             with torch.no_grad():
-                _, value, _ = self.network(
-                    torch.FloatTensor(state).unsqueeze(0).unsqueeze(0),
-                    hidden
-                )
+                inp_tensor = torch.FloatTensor(policy_input).unsqueeze(0).unsqueeze(0)
+                _, value, _ = self.network(inp_tensor, hidden)
                 values.append(value.item())
             
             episode_reward += reward
-            state = next_state
+            
+            # Construct the new policy input: concatenate next_obs, one-hot(action), reward, done flag.
+            one_hot = np.zeros(self.env.action_space.n)
+            one_hot[action] = 1
+            done_flag = float(done or truncated)
+            new_policy_input = np.concatenate([next_obs, one_hot, np.array([reward, done_flag])])
+            
+            policy_input = new_policy_input
             hidden = new_hidden
             
             if done or truncated:
                 break
                 
-        return states, actions, rewards, log_probs, dones, values, episode_reward
+        return inputs, actions, rewards, log_probs, dones, values, episode_reward
 
-    def update_policy(self, all_states, all_actions, all_log_probs, all_returns):
-        episodes_states = [torch.FloatTensor(np.array(states)) for states in all_states]
-        episodes_actions = [torch.LongTensor(actions) for actions in all_actions]
-        episodes_old_log_probs = [torch.FloatTensor(log_probs) for log_probs in all_log_probs]
-        episodes_returns = [torch.FloatTensor(returns) for returns in all_returns]
+    def update_policy(self, all_inputs, all_actions, all_log_probs, all_returns):
+        # Convert lists of episode trajectories to tensors.
+        episodes_inputs = [torch.FloatTensor(np.array(episode)) for episode in all_inputs]
+        episodes_actions = [torch.LongTensor(episode) for episode in all_actions]
+        episodes_old_log_probs = [torch.FloatTensor(episode) for episode in all_log_probs]
+        episodes_returns = [torch.FloatTensor(episode) for episode in all_returns]
         
-        num_episodes = len(episodes_states)
+        num_episodes = len(episodes_inputs)
         total_actor_loss = 0
         total_critic_loss = 0
         num_updates = 0
         
         for _ in range(self.epochs):
             episode_indices = np.random.permutation(num_episodes)
-            
             for start_idx in range(0, num_episodes, self.batch_size):
                 batch_indices = episode_indices[start_idx:start_idx + self.batch_size]
                 actual_batch_size = len(batch_indices)
+                max_len = max(episodes_inputs[idx].size(0) for idx in batch_indices)
                 
-                max_len = max(episodes_states[idx].size(0) for idx in batch_indices)
-                
-                batch_states = torch.zeros(max_len, actual_batch_size, self.input_dim)
+                batch_inputs = torch.zeros(max_len, actual_batch_size, self.input_dim)
                 batch_actions = torch.zeros(max_len, actual_batch_size, dtype=torch.long)
                 batch_old_log_probs = torch.zeros(max_len, actual_batch_size)
                 batch_returns = torch.zeros(max_len, actual_batch_size)
                 batch_masks = torch.zeros(max_len, actual_batch_size)
                 
                 for batch_idx, episode_idx in enumerate(batch_indices):
-                    episode_len = episodes_states[episode_idx].size(0)
-                    batch_states[:episode_len, batch_idx] = episodes_states[episode_idx]
+                    episode_len = episodes_inputs[episode_idx].size(0)
+                    batch_inputs[:episode_len, batch_idx] = episodes_inputs[episode_idx]
                     batch_actions[:episode_len, batch_idx] = episodes_actions[episode_idx]
                     batch_old_log_probs[:episode_len, batch_idx] = episodes_old_log_probs[episode_idx]
                     batch_returns[:episode_len, batch_idx] = episodes_returns[episode_idx]
                     batch_masks[:episode_len, batch_idx] = 1
                 
-                action_logits, values, _ = self.network(batch_states)
-                
+                action_logits, values, _ = self.network(batch_inputs)
                 dist = Categorical(logits=action_logits)
                 new_log_probs = dist.log_prob(batch_actions)
                 
@@ -353,51 +354,44 @@ class RL2PPO:
                 
                 self.optimizer.zero_grad()
                 loss.backward()
-                
-                # Synchronize gradients across workers
                 mpi_avg_grads(self.network)
-                
                 self.optimizer.step()
                 
                 total_actor_loss += actor_loss.item()
                 total_critic_loss += critic_loss.item()
                 num_updates += 1
         
-        # Average losses across workers
         avg_actor_loss = mpi_avg(total_actor_loss / num_updates if num_updates > 0 else 0)
         avg_critic_loss = mpi_avg(total_critic_loss / num_updates if num_updates > 0 else 0)
         return avg_actor_loss, avg_critic_loss
 
     def train_episode(self, num_episodes_per_update=4):
-        # Set random target position for this update
         if isinstance(self.env, CustomLunarLander):
-            new_target = np.random.uniform(0.1, 0.9)  # Slightly inside boundaries
+            new_target = np.random.uniform(0.1, 0.9)
             self.env.set_target_position(new_target)
             print(f"New target position: {new_target:.3f}")
         
         total_reward = 0
         total_length = 0
         
-        all_states = []
+        all_inputs = []
         all_actions = []
         all_log_probs = []
         all_returns = []
         
         for _ in range(num_episodes_per_update):
-            states, actions, rewards, log_probs, dones, values, episode_reward = self.collect_episode()
-            
+            inputs, actions, rewards, log_probs, dones, values, episode_reward = self.collect_episode()
             returns = self.compute_returns(rewards, dones, values)
             
-            all_states.append(states)
+            all_inputs.append(inputs)
             all_actions.append(actions)
             all_log_probs.append(log_probs)
             all_returns.append(returns.tolist())
             
             total_reward += episode_reward
-            total_length += len(states)
+            total_length += len(inputs)
         
-        actor_loss, critic_loss = self.update_policy(all_states, all_actions, all_log_probs, all_returns)
-        
+        actor_loss, critic_loss = self.update_policy(all_inputs, all_actions, all_log_probs, all_returns)
         avg_reward = total_reward / num_episodes_per_update
         avg_length = total_length / num_episodes_per_update
         
@@ -427,10 +421,7 @@ class GRUNetwork(nn.Module):
         if hidden is None:
             batch_size = x.size(1)
             hidden = torch.zeros(1, batch_size, self.gru.hidden_size, device=x.device)
-            
         output, hidden = self.gru(x, hidden)
-        
         action_logits = self.policy(output)
         value = self.value(output)
-        
         return action_logits, value, hidden

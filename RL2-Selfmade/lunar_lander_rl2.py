@@ -149,7 +149,7 @@ def main():
                 latest_model = None
     
     env_name = "CustomLunarLander-v2"
-    num_episodes = 1_000_000
+    num_episodes = 10000
     eval_interval = 50
     num_episodes_per_update = 10
     num_checkpoints_to_keep = 5

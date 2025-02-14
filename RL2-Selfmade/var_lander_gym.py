@@ -725,7 +725,8 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         #  7) right leg contact (0 or 1)
         state = [
             # original reward for target position 0,0
-            (pos.x - self.helipad_x) / (VIEWPORT_W / SCALE / 2),                    # normalized X distance 
+            pos.x / (VIEWPORT_W / SCALE / 2),
+            #(pos.x - self.helipad_x) / (VIEWPORT_W / SCALE / 2),                    # normalized X distance 
             (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2),       # normalized Y distance
             vel.x * (VIEWPORT_W / SCALE / 2) / FPS,
             vel.y * (VIEWPORT_H / SCALE / 2) / FPS,
@@ -745,7 +746,8 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         #  4) leg contacts
         # The agent is encouraged to reduce distance, velocity, angle, and to keep both legs on ground.
         shaping = (
-             -100 * np.sqrt(state[0] * state[0] + state[1] * state[1])
+            -100 * np.sqrt((state[0]- (self.helipad_x/(VIEWPORT_W / SCALE / 2))) * (state[0]- (self.helipad_x/(VIEWPORT_W / SCALE / 2))) + state[1] * state[1])
+             #-100 * np.sqrt(state[0] * state[0] + state[1] * state[1])
             - 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])
             - 100 * abs(state[4])
             + 10 * state[6]
@@ -766,7 +768,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         # EPISODE TERMINATION CONDITIONS
         terminated = False
         # if self.game_over or pos.x >W or pos.x<0 or pos.y>H:
-        if self.game_over or pos.x >W or pos.x<0:
+        if self.game_over or pos.x >W or pos.x<0 or pos.y>H or pos.y<0:
             terminated = True
             reward = -100
         

@@ -28,7 +28,7 @@ class CustomLunarLander(LunarLanderTargetPos):
     def set_target_position(self, x_position):
         """Set new target landing position (-1 to 1 range)"""
         # Clamp the position to valid range
-        self.target_x = np.clip(x_position, -0.8, 0.8)  # Slightly inside boundaries
+        self.target_x = np.clip(x_position, 0.1, 0.9)  # Slightly inside boundaries
         # Reset the environment with new target
         self.reset()
     

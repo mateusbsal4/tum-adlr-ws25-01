@@ -950,4 +950,3 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             pygame.display.quit()
             pygame.quit()
             self.isopen = False
-

@@ -755,6 +755,9 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         ) 
         
 
+        if (state[6] or state[7]) and (state[0]- (self.helipad_x/(VIEWPORT_W / SCALE / 2)))/(self.helipad_x/(VIEWPORT_W / SCALE / 2)) > 0.05:
+            shaping -= 30
+
         # The difference in shaping from the previous step is given as reward.
         reward = 0
         if self.prev_shaping is not None:
@@ -764,6 +767,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         # Additional penalty for using fuel:
         reward -= m_power * 0.30  # main engine penalty
         reward -= s_power * 0.03  # side engines penalty
+
 
         # EPISODE TERMINATION CONDITIONS
         terminated = False

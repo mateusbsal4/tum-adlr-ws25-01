@@ -160,15 +160,26 @@ class ContextAwarePPO:
     
     def collect_episode(self, context=None):
         state = self.env.reset()[0]
-        trajectory = []  # Store (s, a, r) for context encoding
         
-        states, actions, rewards, log_probs, dones, values = [], [], [], [], [], []
-        episode_reward = 0
+        # Pre-allocate numpy arrays for max episode length
+        max_steps = 1000
+        states = np.zeros((max_steps, self.state_dim), dtype=np.float32)
+        actions = np.zeros(max_steps, dtype=np.int64)
+        rewards = np.zeros(max_steps, dtype=np.float32)
+        log_probs = np.zeros(max_steps, dtype=np.float32)
+        dones = np.zeros(max_steps, dtype=np.bool_)
+        values = np.zeros(max_steps, dtype=np.float32)
+        
+        # Pre-allocate trajectory array (state + one-hot action + reward)
+        trajectory = np.zeros((max_steps, self.state_dim + self.action_dim + 1), dtype=np.float32)
         
         if context is None:
             context = torch.zeros(self.context_dim)
         
-        for _ in range(1000):  # Max steps
+        episode_length = 0
+        episode_reward = 0
+        
+        for step in range(max_steps):
             if self.render_mode == "human":
                 self.env.render()
             
@@ -176,53 +187,72 @@ class ContextAwarePPO:
             action, log_prob, value = self.get_action(state, context)
             next_state, reward, done, truncated, _ = self.env.step(action)
             
-            # Store transition
-            states.append(state)
-            actions.append(action)
-            rewards.append(reward)
-            log_probs.append(log_prob)
-            dones.append(done or truncated)
-            values.append(value)
+            # Store transition in pre-allocated arrays
+            states[step] = state
+            actions[step] = action
+            rewards[step] = reward
+            log_probs[step] = log_prob
+            dones[step] = done or truncated
+            values[step] = value
             
             # Store trajectory for context encoding
             # One-hot encode action
-            action_one_hot = np.zeros(self.action_dim)
+            action_one_hot = np.zeros(self.action_dim, dtype=np.float32)
             action_one_hot[action] = 1
-            trajectory.append(np.concatenate([state, action_one_hot, [reward]]))
+            trajectory[step] = np.concatenate([state, action_one_hot, [reward]])
             
             episode_reward += reward
             state = next_state
+            episode_length += 1
             
             if done or truncated:
                 break
         
+        # Trim arrays to actual episode length
+        states = states[:episode_length]
+        actions = actions[:episode_length]
+        rewards = rewards[:episode_length]
+        log_probs = log_probs[:episode_length]
+        dones = dones[:episode_length]
+        values = values[:episode_length]
+        trajectory = trajectory[:episode_length]
+        
         # Encode trajectory to get context
-        if len(trajectory) > 0:
-            trajectory = torch.FloatTensor(trajectory).unsqueeze(1)  # [seq_len, 1, dim]
+        if episode_length > 0:
+            # Convert trajectory to tensor efficiently
+            trajectory_tensor = torch.from_numpy(trajectory).unsqueeze(1)  # [seq_len, 1, dim]
             with torch.no_grad():
-                context, context_mean, context_log_std, disturbance_pred = self.context_encoder(trajectory)
+                context, context_mean, context_log_std, disturbance_pred = self.context_encoder(trajectory_tensor)
                 context = context.squeeze(0)  # Remove batch dimension
         
-        return states, actions, rewards, log_probs, dones, values, episode_reward, context, trajectory
+        return states.tolist(), actions.tolist(), rewards.tolist(), log_probs.tolist(), dones.tolist(), values.tolist(), episode_reward, context, trajectory_tensor
     
     def compute_returns(self, rewards, dones, values):
-        returns = []
+        # Convert inputs to numpy arrays if they aren't already
+        rewards = np.array(rewards, dtype=np.float32)
+        dones = np.array(dones, dtype=np.float32)
+        values = np.array(values, dtype=np.float32)
+        
+        # Pre-allocate returns array
+        returns = np.zeros_like(rewards)
         running_return = 0
         
-        for r, d, v in zip(reversed(rewards), reversed(dones), reversed(values)):
-            running_return = r + self.gamma * running_return * (1 - d)
-            returns.insert(0, running_return)
+        # Compute returns in reverse order
+        for t in range(len(rewards) - 1, -1, -1):
+            running_return = rewards[t] + self.gamma * running_return * (1 - dones[t])
+            returns[t] = running_return
             
-        returns = torch.FloatTensor(returns)
+        # Convert to tensor and normalize
+        returns = torch.from_numpy(returns)
         returns = (returns - returns.mean()) / (returns.std() + 1e-8)
         return returns
     
     def update_policy(self, all_states, all_actions, all_log_probs, all_returns, all_contexts, all_trajectories):
-        # Prepare data
-        episodes_states = [torch.FloatTensor(np.array(states)) for states in all_states]
-        episodes_actions = [torch.LongTensor(actions) for actions in all_actions]
-        episodes_old_log_probs = [torch.FloatTensor(log_probs) for log_probs in all_log_probs]
-        episodes_returns = [torch.FloatTensor(returns) for returns in all_returns]
+        # Convert all inputs to tensors efficiently
+        episodes_states = [torch.from_numpy(np.array(states, dtype=np.float32)) for states in all_states]
+        episodes_actions = [torch.from_numpy(np.array(actions, dtype=np.int64)) for actions in all_actions]
+        episodes_old_log_probs = [torch.from_numpy(np.array(log_probs, dtype=np.float32)) for log_probs in all_log_probs]
+        episodes_returns = [torch.from_numpy(np.array(returns, dtype=np.float32)) for returns in all_returns]
         
         num_episodes = len(episodes_states)
         total_actor_loss = 0
@@ -384,7 +414,11 @@ class ContextAwarePPO:
         for _ in range(num_episodes):
             state = self.env.reset()[0]
             episode_reward = 0
-            trajectory = []
+            
+            # Pre-allocate trajectory array for max steps
+            max_steps = 1000
+            trajectory = np.zeros((max_steps, self.state_dim + self.action_dim + 1), dtype=np.float32)
+            episode_length = 0
             done = False
             
             while not done:
@@ -392,18 +426,20 @@ class ContextAwarePPO:
                 action, _, _ = self.get_action(state, context)
                 next_state, reward, done, truncated, _ = self.env.step(action)
                 
-                # Store transition for context encoding
-                action_one_hot = np.zeros(self.action_dim)
+                # Store transition in trajectory array
+                action_one_hot = np.zeros(self.action_dim, dtype=np.float32)
                 action_one_hot[action] = 1
-                trajectory.append(np.concatenate([state, action_one_hot, [reward]]))
+                trajectory[episode_length] = np.concatenate([state, action_one_hot, [reward]])
                 
                 episode_reward += reward
                 state = next_state
                 done = done or truncated
+                episode_length += 1
                 
                 # Update context estimate using trajectory so far
-                if len(trajectory) > 0:
-                    traj_tensor = torch.FloatTensor(trajectory).unsqueeze(1)
+                if episode_length > 0:
+                    # Trim trajectory to current length and convert to tensor
+                    traj_tensor = torch.from_numpy(trajectory[:episode_length]).unsqueeze(1)
                     with torch.no_grad():
                         context, _, _, _ = self.context_encoder(traj_tensor)
                         context = context.squeeze(0)

@@ -28,12 +28,16 @@ def plot_rewards(training_rewards, eval_rewards, eval_interval, episodes_per_upd
     plt.figure(figsize=(12, 6))
     
     # Plot training rewards
-    train_episodes = np.arange(1, len(training_rewards) + 1) * episodes_per_update
+    # Each training reward represents episodes_per_update episodes
+    train_episodes = np.arange(episodes_per_update, len(training_rewards) * episodes_per_update + 1, episodes_per_update)
     plt.plot(train_episodes, training_rewards, label='Training Rewards', alpha=0.6)
     
     # Plot evaluation rewards
+    # Evaluations happen every eval_interval training updates, each update is episodes_per_update episodes
     if eval_rewards:
-        eval_episodes = np.arange(1, len(eval_rewards) + 1) * eval_interval * episodes_per_update
+        eval_episodes = np.arange(eval_interval, 
+                                len(eval_rewards) * eval_interval + 1, 
+                                eval_interval)
         plt.plot(eval_episodes, eval_rewards, label='Evaluation Rewards', linewidth=2)
     
     plt.xlabel('Episodes')

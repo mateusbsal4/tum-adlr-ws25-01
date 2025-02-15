@@ -754,9 +754,19 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             + 10 * state[7]
         ) 
         
+        tol = 0.05
+        rel_diff1 = abs((state[0]- (self.helipad_x/(VIEWPORT_W / SCALE / 2)))/(self.helipad_x/(VIEWPORT_W / SCALE / 2)))
+        rel_diff2 = abs((state[0]- (self.helipad_x/(VIEWPORT_W / SCALE / 2)))/state[0])
 
-        if (state[6] or state[7]) and (state[0]- (self.helipad_x/(VIEWPORT_W / SCALE / 2)))/(self.helipad_x/(VIEWPORT_W / SCALE / 2)) > 0.05:
-            shaping -= 30
+        if self.legs[0].ground_contact and (rel_diff1 > tol or rel_diff2 > tol):
+            print("Leg 1 in contact. Lander position: ", state[0])
+            print("Target position: ", self.helipad_x/(VIEWPORT_W / SCALE / 2))
+            shaping -= 15
+        if self.legs[1].ground_contact and (rel_diff1 > tol or rel_diff2 > tol):
+            print("Leg 2 in contact. Lander position: ", state[0])
+            print("Target position: ", self.helipad_x/(VIEWPORT_W / SCALE / 2))
+            shaping -= 15        
+        
 
         # The difference in shaping from the previous step is given as reward.
         reward = 0

@@ -409,11 +409,20 @@ class ContextAwarePPO:
             return 0.0
             
         eval_rewards = []
+        disturbance_losses = []
         context = None  # Initial context estimate
         
-        for _ in range(num_episodes):
+        for episode in range(num_episodes):
             state = self.env.reset()[0]
             episode_reward = 0
+            disturbance_loss = 0
+            
+            # Get actual disturbances from environment
+            actual_disturbances = self.env.get_current_disturbance()
+            print(f"\nEpisode {episode + 1} Disturbances:")
+            print(f"  Actual: gravity={actual_disturbances['gravity']:.3f}, "
+                  f"wind={actual_disturbances['wind_power']:.3f}, "
+                  f"turbulence={actual_disturbances['turbulence_power']:.3f}")
             
             # Pre-allocate trajectory array for max steps
             max_steps = 1000
@@ -441,15 +450,38 @@ class ContextAwarePPO:
                     # Trim trajectory to current length and convert to tensor
                     traj_tensor = torch.from_numpy(trajectory[:episode_length]).unsqueeze(1)
                     with torch.no_grad():
-                        context, _, _, _ = self.context_encoder(traj_tensor)
+                        context, _, _, disturbance_pred = self.context_encoder(traj_tensor)
                         context = context.squeeze(0)
+                        
+                        # Print predicted disturbances every 100 steps
+                        if step % 100 == 0:
+                            # Predicted disturbances: first value is wind_power, second is gravity
+                            pred_wind, pred_gravity = disturbance_pred.squeeze().numpy()
+                            # Scale predictions to match actual ranges
+                            pred_wind = pred_wind * 7.5 + 7.5  # Scale to [0, 15]
+                            pred_gravity = pred_gravity * 1.0 - 10.0  # Scale to [-11, -9]
+                            print(f"  Step {step:4d} Predicted: gravity={pred_gravity:.3f}, wind={pred_wind:.3f}")
                 
                 if done or step == max_steps - 1:  # Break if done or reached max steps
+                    # Print final predictions
+                    pred_wind, pred_gravity = disturbance_pred.squeeze().numpy()
+                    pred_wind = pred_wind * 7.5 + 7.5  # Scale to [0, 15]
+                    pred_gravity = pred_gravity * 1.0 - 10.0  # Scale to [-11, -9]
+                    disturbance_loss = np.sqrt((pred_wind - actual_disturbances['wind_power'])**2 + (pred_gravity - actual_disturbances['gravity'])**2)
+                    print(f"  Final Predicted: gravity={pred_gravity:.3f}, wind={pred_wind:.3f}")
+                    print(f"  Disturbance Loss: {disturbance_loss:.2f}")
+                    print(f"  Episode Length: {episode_length}, Reward: {episode_reward:.2f}")
                     break
             
+            # Save evaluation metrics
             eval_rewards.append(episode_reward)
-        
-        return np.mean(eval_rewards)
+            disturbance_losses.append(disturbance_loss)
+            
+        mean_reward = np.mean(eval_rewards)
+        print(f"\nEvaluation Summary:")
+        print(f"Reward over {num_episodes} episodes: {mean_reward:.2f} +- {np.std(eval_rewards):.2f}")
+        print(f"Disturbance Loss: {np.mean(disturbance_losses):.2f}")
+        return mean_reward
     
     def save_model(self, suffix=''):
         if self.rank != 0:  # Only save on rank 0

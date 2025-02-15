@@ -760,7 +760,6 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         if self.legs[1].ground_contact and (pos.x > self.helipad_x1 and pos.x < self.helipad_x2):
             shaping += 10
 
-
         # The difference in shaping from the previous step is given as reward.
         reward = 0
         if self.prev_shaping is not None:
@@ -771,14 +770,6 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         reward -= m_power * 0.30  # main engine penalty
         reward -= s_power * 0.03  # side engines penalty
 
-
-        #Penalties for landing and staying on the ground outside the helipad area
-        #if self.legs[0].ground_contact and (pos.x < self.helipad_x1 or pos.x > self.helipad_x2):
-        #    reward -= 1
-        #if self.legs[1].ground_contact and (pos.x < self.helipad_x1 or pos.x > self.helipad_x2):
-        #    reward -= 1
-
-
         # EPISODE TERMINATION CONDITIONS
         terminated = False
         # if self.game_over or pos.x >W or pos.x<0 or pos.y>H:
@@ -787,10 +778,20 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             reward = -100
         
         # If lander stops moving (self.lander.awake==False), it's a successful landing        
-        if not self.lander.awake:
+        elif not self.lander.awake:
             terminated = True
             if pos.x > self.helipad_x1 and pos.x < self.helipad_x2:
                 reward = +100
+            else:
+                reward = -100
+        
+        elif self.legs[0].ground_contact and self.legs[1].ground_contact:
+            terminated = True
+            if pos.x > self.helipad_x1 and pos.x < self.helipad_x2:
+                reward = +100
+            else:
+                reward = -100
+
 
         # NOTE: Gymnasium's TimeLimit wrapper handles max episode steps => 'False' for truncation here.
         if self.render_mode == "human":

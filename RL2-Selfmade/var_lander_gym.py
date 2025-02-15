@@ -750,23 +750,16 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
              #-100 * np.sqrt(state[0] * state[0] + state[1] * state[1])
             - 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])
             - 100 * abs(state[4])
-            + 10 * state[6]
-            + 10 * state[7]
+        #    + 10 * state[6]
+        #    + 10 * state[7]
         ) 
         
-        tol = 0.05
-        rel_diff1 = abs((state[0]- (self.helipad_x/(VIEWPORT_W / SCALE / 2)))/(self.helipad_x/(VIEWPORT_W / SCALE / 2)))
-        rel_diff2 = abs((state[0]- (self.helipad_x/(VIEWPORT_W / SCALE / 2)))/state[0])
 
-        if self.legs[0].ground_contact and (rel_diff1 > tol or rel_diff2 > tol):
-            print("Leg 1 in contact. Lander position: ", state[0])
-            print("Target position: ", self.helipad_x/(VIEWPORT_W / SCALE / 2))
-            shaping -= 15
-        if self.legs[1].ground_contact and (rel_diff1 > tol or rel_diff2 > tol):
-            print("Leg 2 in contact. Lander position: ", state[0])
-            print("Target position: ", self.helipad_x/(VIEWPORT_W / SCALE / 2))
-            shaping -= 15        
-        
+        if self.legs[0].ground_contact and (pos.x > self.helipad_x1 and pos.x < self.helipad_x2):
+            shaping += 10
+        if self.legs[1].ground_contact and (pos.x > self.helipad_x1 and pos.x < self.helipad_x2):
+            shaping += 10
+
 
         # The difference in shaping from the previous step is given as reward.
         reward = 0
@@ -779,6 +772,13 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         reward -= s_power * 0.03  # side engines penalty
 
 
+        #Penalties for landing and staying on the ground outside the helipad area
+        #if self.legs[0].ground_contact and (pos.x < self.helipad_x1 or pos.x > self.helipad_x2):
+        #    reward -= 1
+        #if self.legs[1].ground_contact and (pos.x < self.helipad_x1 or pos.x > self.helipad_x2):
+        #    reward -= 1
+
+
         # EPISODE TERMINATION CONDITIONS
         terminated = False
         # if self.game_over or pos.x >W or pos.x<0 or pos.y>H:
@@ -789,7 +789,8 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         # If lander stops moving (self.lander.awake==False), it's a successful landing        
         if not self.lander.awake:
             terminated = True
-            reward = +100
+            if pos.x > self.helipad_x1 and pos.x < self.helipad_x2:
+                reward = +100
 
         # NOTE: Gymnasium's TimeLimit wrapper handles max episode steps => 'False' for truncation here.
         if self.render_mode == "human":

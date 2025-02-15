@@ -421,7 +421,7 @@ class ContextAwarePPO:
             episode_length = 0
             done = False
             
-            while not done:
+            for step in range(max_steps):  # Use step counter to ensure we don't exceed max_steps
                 # Get action using current context estimate
                 action, _, _ = self.get_action(state, context)
                 next_state, reward, done, truncated, _ = self.env.step(action)
@@ -433,8 +433,8 @@ class ContextAwarePPO:
                 
                 episode_reward += reward
                 state = next_state
-                done = done or truncated
                 episode_length += 1
+                done = done or truncated
                 
                 # Update context estimate using trajectory so far
                 if episode_length > 0:
@@ -443,6 +443,9 @@ class ContextAwarePPO:
                     with torch.no_grad():
                         context, _, _, _ = self.context_encoder(traj_tensor)
                         context = context.squeeze(0)
+                
+                if done or step == max_steps - 1:  # Break if done or reached max steps
+                    break
             
             eval_rewards.append(episode_reward)
         

@@ -61,13 +61,13 @@ class RL2PPO:
         
         # New input: concatenation of next state, one-hot action, reward, termination flag.
         self.input_dim = self.env.observation_space.shape[0] + self.env.action_space.n + 2  
-        # self.input_dim = self.env.observation_space.shape[0]  # (old)
+        self.obs_dim = self.env.observation_space.shape[0]  
         self.output_dim = self.env.action_space.n
         self.hidden_dim = hidden_dim
         self.env_name = env_name
         self.render_mode = render_mode
         
-        self.network = GRUNetwork(self.input_dim, hidden_dim, self.output_dim)
+        self.network = GRUNetwork(self.input_dim, hidden_dim, self.output_dim, self.obs_dim)
         self.optimizer = optim.Adam(self.network.parameters(), lr=lr)
         
         self.gamma = gamma
@@ -192,8 +192,9 @@ class RL2PPO:
             for step in range(max_steps):
                 # Convert the current policy input to tensor and get action.
                 inp_tensor = torch.FloatTensor(policy_input).unsqueeze(0).unsqueeze(0)
+                obs_tensor = torch.FloatTensor(obs).unsqueeze(0).unsqueeze(0)
                 with torch.no_grad():
-                    action_logits, _, hidden = self.network(inp_tensor, hidden)
+                    action_logits, _, hidden = self.network(inp_tensor,obs_tensor, hidden)
                     action_probs = torch.softmax(action_logits, dim=-1)
                     action = torch.argmax(action_probs).item()
                 
@@ -228,11 +229,12 @@ class RL2PPO:
         
         return mean_reward
 
-    def get_action(self, policy_input, hidden):
+    def get_action(self, policy_input, hidden, obs):
         # Convert the policy input vector to tensor (unsqueezed for seq and batch dims)
         inp = torch.FloatTensor(policy_input).unsqueeze(0).unsqueeze(0)
+        obs_tensor = torch.FloatTensor(obs).unsqueeze(0).unsqueeze(0)
         with torch.no_grad():
-            action_logits, _, new_hidden = self.network(inp, hidden)
+            action_logits, _, new_hidden = self.network(inp, obs_tensor, hidden)
         
         dist = Categorical(logits=action_logits.squeeze())
         action = dist.sample()
@@ -243,9 +245,9 @@ class RL2PPO:
     def compute_returns(self, rewards, dones, values):
         returns = []
         running_return = 0
-        for r, d, v in zip(reversed(rewards), reversed(dones), reversed(values)):
-            running_return = r + self.gamma * running_return * (1 - d)
-            returns.insert(0, running_return)
+        for r, d, v in zip(reversed(rewards), reversed(dones), reversed(values)):       #Computing sum of discounted rewards for a path (REINFORCE)
+            running_return = r + self.gamma * running_return * (1 - d) - v      #running return starts from the last reward
+            returns.insert(0, running_return)                               # list of returns for each step in the path 
         returns = torch.FloatTensor(returns)
         returns = (returns - returns.mean()) / (returns.std() + 1e-8)
         return returns
@@ -258,6 +260,7 @@ class RL2PPO:
         policy_input = np.concatenate([obs, np.zeros(self.env.action_space.n + 2)])
         
         # Lists to store trajectories (inputs, actions, etc.)
+        observs = []
         inputs = []      # will store the policy inputs fed into the network
         actions = []
         rewards = []
@@ -270,11 +273,12 @@ class RL2PPO:
             if self.render_mode == "human":
                 self.env.render()
                 
-            action, log_prob, new_hidden = self.get_action(policy_input, hidden)
+            action, log_prob, new_hidden = self.get_action(policy_input, hidden, obs)
             
             next_obs, reward, done, truncated, _ = self.env.step(action)
             
             # Record the current policy input along with action, reward, etc.
+            observs.append(obs)
             inputs.append(policy_input)
             actions.append(action)
             rewards.append(reward)
@@ -284,7 +288,8 @@ class RL2PPO:
             # Get the value estimate for the current step.
             with torch.no_grad():
                 inp_tensor = torch.FloatTensor(policy_input).unsqueeze(0).unsqueeze(0)
-                _, value, _ = self.network(inp_tensor, hidden)
+                obs_tensor = torch.FloatTensor(obs).unsqueeze(0).unsqueeze(0)
+                _, value, _ = self.network(inp_tensor, obs_tensor, hidden)
                 values.append(value.item())
             
             episode_reward += reward
@@ -296,19 +301,20 @@ class RL2PPO:
             new_policy_input = np.concatenate([next_obs, one_hot, np.array([reward, done_flag])])
             
             policy_input = new_policy_input
+            obs = next_obs
             hidden = new_hidden
             
             if done or truncated:
                 break
-                
-        return inputs, actions, rewards, log_probs, dones, values, episode_reward
+        return observs, inputs, actions, rewards, log_probs, dones, values, episode_reward
 
-    def update_policy(self, all_inputs, all_actions, all_log_probs, all_returns):
+    def update_policy(self, all_obs, all_inputs, all_actions, all_log_probs, all_returns):
         # Convert lists of episode trajectories to tensors.
-        episodes_inputs = [torch.FloatTensor(np.array(episode)) for episode in all_inputs]
-        episodes_actions = [torch.LongTensor(episode) for episode in all_actions]
-        episodes_old_log_probs = [torch.FloatTensor(episode) for episode in all_log_probs]
-        episodes_returns = [torch.FloatTensor(episode) for episode in all_returns]
+        episodes_obs = [torch.FloatTensor(np.array(obs)) for obs in all_obs]
+        episodes_inputs = [torch.FloatTensor(np.array(inputs)) for inputs in all_inputs]
+        episodes_actions = [torch.LongTensor(actions) for actions in all_actions]
+        episodes_old_log_probs = [torch.FloatTensor(log_probs) for log_probs in all_log_probs]
+        episodes_returns = [torch.FloatTensor(returns) for returns in all_returns]
         
         num_episodes = len(episodes_inputs)
         total_actor_loss = 0
@@ -322,6 +328,7 @@ class RL2PPO:
                 actual_batch_size = len(batch_indices)
                 max_len = max(episodes_inputs[idx].size(0) for idx in batch_indices)
                 
+                batch_obs = torch.zeros(max_len, actual_batch_size, self.obs_dim)
                 batch_inputs = torch.zeros(max_len, actual_batch_size, self.input_dim)
                 batch_actions = torch.zeros(max_len, actual_batch_size, dtype=torch.long)
                 batch_old_log_probs = torch.zeros(max_len, actual_batch_size)
@@ -330,13 +337,14 @@ class RL2PPO:
                 
                 for batch_idx, episode_idx in enumerate(batch_indices):
                     episode_len = episodes_inputs[episode_idx].size(0)
+                    batch_obs[:episode_len, batch_idx] = episodes_obs[episode_idx]
                     batch_inputs[:episode_len, batch_idx] = episodes_inputs[episode_idx]
                     batch_actions[:episode_len, batch_idx] = episodes_actions[episode_idx]
                     batch_old_log_probs[:episode_len, batch_idx] = episodes_old_log_probs[episode_idx]
                     batch_returns[:episode_len, batch_idx] = episodes_returns[episode_idx]
                     batch_masks[:episode_len, batch_idx] = 1
                 
-                action_logits, values, _ = self.network(batch_inputs)
+                action_logits, values, _ = self.network(batch_inputs, batch_obs)
                 dist = Categorical(logits=action_logits)
                 new_log_probs = dist.log_prob(batch_actions)
                 
@@ -374,15 +382,17 @@ class RL2PPO:
         total_reward = 0
         total_length = 0
         
+        all_obs = []
         all_inputs = []
         all_actions = []
         all_log_probs = []
         all_returns = []
         
         for _ in range(num_episodes_per_update):
-            inputs, actions, rewards, log_probs, dones, values, episode_reward = self.collect_episode()
+            obs, inputs, actions, rewards, log_probs, dones, values, episode_reward = self.collect_episode()
             returns = self.compute_returns(rewards, dones, values)
             
+            all_obs.append(obs)
             all_inputs.append(inputs)
             all_actions.append(actions)
             all_log_probs.append(log_probs)
@@ -391,9 +401,11 @@ class RL2PPO:
             total_reward += episode_reward
             total_length += len(inputs)
         
-        actor_loss, critic_loss = self.update_policy(all_inputs, all_actions, all_log_probs, all_returns)
+        actor_loss, critic_loss = self.update_policy(all_obs, all_inputs, all_actions, all_log_probs, all_returns)
         avg_reward = total_reward / num_episodes_per_update
         avg_length = total_length / num_episodes_per_update
+
+
         
         return avg_reward, avg_length, actor_loss, critic_loss
     
@@ -403,7 +415,7 @@ class RL2PPO:
         return agent.evaluate(num_episodes=num_episodes, render=render)
 
 class GRUNetwork(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim):
+    def __init__(self, input_dim, hidden_dim, output_dim, obs_dim):
         super(GRUNetwork, self).__init__()
         self.gru = nn.GRU(input_dim, hidden_dim, batch_first=False)
         self.policy = nn.Sequential(
@@ -412,16 +424,16 @@ class GRUNetwork(nn.Module):
             nn.Linear(64, output_dim)
         )
         self.value = nn.Sequential(
-            nn.Linear(hidden_dim, 64),
+            nn.Linear(obs_dim, 64),
             nn.Tanh(),
             nn.Linear(64, 1)
         )
         
-    def forward(self, x, hidden=None):
+    def forward(self, x, obs, hidden=None):
         if hidden is None:
             batch_size = x.size(1)
             hidden = torch.zeros(1, batch_size, self.gru.hidden_size, device=x.device)
         output, hidden = self.gru(x, hidden)
         action_logits = self.policy(output)
-        value = self.value(output)
+        value = self.value(obs)
         return action_logits, value, hidden

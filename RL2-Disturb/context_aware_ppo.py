@@ -422,7 +422,9 @@ class ContextAwarePPO:
         context = None  # Initial context estimate
         
         for episode in range(num_episodes):
-            state = self.env.reset()[0]
+            # sample new wind power every episode
+            self.env.sample_disturbances()
+                
             episode_reward = 0
             
             # Get actual wind power from environment
@@ -436,6 +438,7 @@ class ContextAwarePPO:
             trajectory = np.zeros((max_steps, self.state_dim + self.action_dim + 1), dtype=np.float32)
             episode_length = 0
             done = False
+            state = self.env.reset(options={'sample_new_wind': False})[0]
             
             for step in range(max_steps):
                 # Get action using current context estimate

@@ -159,7 +159,8 @@ class ContextAwarePPO:
         return action.item(), log_prob.item(), value.item()
     
     def collect_episode(self, context=None):
-        state = self.env.reset()[0]
+        # Reset without sampling new wind speed (it's already set for this update)
+        state = self.env.reset(options={'sample_new_wind': False})[0]
         
         # Pre-allocate numpy arrays for max episode length
         max_steps = 1000
@@ -225,7 +226,7 @@ class ContextAwarePPO:
                 context, context_mean, context_log_std, wind_power = self.context_encoder(trajectory_tensor)
                 context = context.squeeze(0)  # Remove batch dimension
         
-        return states.tolist(), actions.tolist(), rewards.tolist(), log_probs.tolist(), dones.tolist(), values.tolist(), episode_reward, context, trajectory_tensor
+        return states, actions, rewards, log_probs, dones, values, episode_reward, context, trajectory_tensor
     
     def compute_returns(self, rewards, dones, values):
         # Convert inputs to numpy arrays if they aren't already
@@ -376,7 +377,15 @@ class ContextAwarePPO:
         
         context = None  # Initial context estimate
         
+        # Sample new wind speed at the start of the update
+        if isinstance(self.env, CustomLunarLander):
+            self.env.sample_disturbances()
+            if self.rank == 0:  # Only print from rank 0
+                wind = self.env.get_current_disturbance()['wind_power']
+                print(f"\nNew wind power for this update: {wind:.3f}")
+        
         for _ in range(num_episodes_per_update):
+            # Don't sample new wind speed during episode resets within the same update
             states, actions, rewards, log_probs, dones, values, episode_reward, new_context, trajectory = self.collect_episode(context)
             
             returns = self.compute_returns(rewards, dones, values)

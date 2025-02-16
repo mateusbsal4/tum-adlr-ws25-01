@@ -44,8 +44,8 @@ class CustomLunarLander(LunarLanderTargetPos):
     
     def sample_disturbances(self):
         """Sample new random wind power value within defined range"""
-        # self.current_wind_power = np.random.uniform(*self.wind_power_range)
-        self.current_wind_power = 7.0
+        self.current_wind_power = np.random.uniform(*self.wind_power_range)
+        
         # Update current disturbance dictionary
         self.current_disturbance = {
             'wind_power': self.current_wind_power
@@ -72,9 +72,10 @@ class CustomLunarLander(LunarLanderTargetPos):
         return self.current_disturbance.copy()
     
     def reset(self, seed=None, options=None):
-        """Reset environment and sample new wind power"""
-        # Sample new wind power
-        self.sample_disturbances()
+        """Reset environment while keeping the current wind power unless explicitly requested"""
+        # Only sample new wind power if requested through options
+        if options and options.get('sample_new_wind', False):
+            self.sample_disturbances()
         
         # Reset Box2D world
         observation, info = super().reset(seed=seed, options=options)

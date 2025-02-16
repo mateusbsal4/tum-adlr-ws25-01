@@ -103,8 +103,28 @@ def extract_metrics_from_log(log_file):
     return episodes, lengths, rewards, actor_losses, critic_losses, context_losses, eval_rewards
 
 def plot_metrics(episodes, lengths, rewards, actor_losses, critic_losses, context_losses, eval_rewards, save_dir):
+    mode = 'same'
+
     # Create figure with subplots for training metrics
     fig1, ((ax1, ax2), (ax3, ax4), (ax5, ax6)) = plt.subplots(3, 2, figsize=(15, 15))
+    
+    def calculate_moving_average(data, window):
+        """Calculate moving average showing all points from start"""
+        if len(data) < window:
+            window = len(data)
+            
+        # Calculate cumulative sum
+        cumsum = np.cumsum(np.insert(data, 0, 0))
+        
+        # Calculate moving average for all points
+        ma = np.zeros(len(data))
+        
+        # For each point, use as many previous points as available up to window size
+        for i in range(len(data)):
+            start_idx = max(0, i + 1 - window)
+            ma[i] = (cumsum[i + 1] - cumsum[start_idx]) / (i + 1 - start_idx)
+            
+        return ma
     
     # Plot episode lengths
     ax1.plot(episodes, lengths, 'b-', alpha=0.3)
@@ -115,16 +135,14 @@ def plot_metrics(episodes, lengths, rewards, actor_losses, critic_losses, contex
     
     # Plot moving average of episode lengths
     window = 50  # Window size
-    # Calculate moving average from the start
-    weights = np.ones(window) / window
-    moving_avg = np.convolve(lengths, weights, mode='same')
-    ax1.plot(episodes, moving_avg, 'b-', label=f'{window}-episode moving average')
+    ma = calculate_moving_average(lengths, window)
+    ax1.plot(episodes, ma, 'b-', label=f'{window}-episode moving average')
     ax1.legend()
     
     # Plot training rewards
     ax2.plot(episodes, rewards, 'g-', alpha=0.3, label='Per Episode')
-    moving_avg = np.convolve(rewards, weights, mode='same')
-    ax2.plot(episodes, moving_avg, 'g-', linewidth=2, label=f'{window}-episode moving average')
+    ma = calculate_moving_average(rewards, window)
+    ax2.plot(episodes, ma, 'g-', linewidth=2, label=f'{window}-episode moving average')
     ax2.set_xlabel('Episode')
     ax2.set_ylabel('Training Reward')
     ax2.set_title('Training Rewards')
@@ -139,8 +157,8 @@ def plot_metrics(episodes, lengths, rewards, actor_losses, critic_losses, contex
     ax3.grid(True)
     
     # Plot moving average of actor losses
-    moving_avg = np.convolve(actor_losses, weights, mode='same')
-    ax3.plot(episodes, moving_avg, 'm-', label=f'{window}-episode moving average')
+    ma = calculate_moving_average(actor_losses, window)
+    ax3.plot(episodes, ma, 'm-', label=f'{window}-episode moving average')
     ax3.legend()
     
     # Plot critic losses
@@ -151,8 +169,8 @@ def plot_metrics(episodes, lengths, rewards, actor_losses, critic_losses, contex
     ax4.grid(True)
     
     # Plot moving average of critic losses
-    moving_avg = np.convolve(critic_losses, weights, mode='same')
-    ax4.plot(episodes, moving_avg, 'c-', label=f'{window}-episode moving average')
+    ma = calculate_moving_average(critic_losses, window)
+    ax4.plot(episodes, ma, 'c-', label=f'{window}-episode moving average')
     ax4.legend()
     
     # Plot context losses
@@ -164,8 +182,8 @@ def plot_metrics(episodes, lengths, rewards, actor_losses, critic_losses, contex
         ax5.grid(True)
         
         # Plot moving average of context losses
-        moving_avg = np.convolve(context_losses, weights, mode='same')
-        ax5.plot(episodes, moving_avg, 'y-', label=f'{window}-episode moving average')
+        ma = calculate_moving_average(context_losses, window)
+        ax5.plot(episodes, ma, 'y-', label=f'{window}-episode moving average')
         ax5.legend()
     
     # Plot evaluation rewards
@@ -176,9 +194,9 @@ def plot_metrics(episodes, lengths, rewards, actor_losses, critic_losses, contex
         
         # For evaluation rewards, use a smaller window if needed
         eval_window = min(window, len(eval_rewards))
-        eval_weights = np.ones(eval_window) / eval_window
-        moving_avg = np.convolve(eval_rewards, eval_weights, mode='same')
-        ax6.plot(eval_episodes, moving_avg, 'r-', linewidth=2, label=f'{eval_window}-episode moving average')
+        if len(eval_rewards) > 1:  # Only calculate moving average if we have more than one point
+            ma = calculate_moving_average(eval_rewards, eval_window)
+            ax6.plot(eval_episodes, ma, 'r-', linewidth=2, label=f'{eval_window}-episode moving average')
         ax6.set_xlabel('Episode')
         ax6.set_ylabel('Evaluation Reward')
         ax6.set_title('Evaluation Rewards')

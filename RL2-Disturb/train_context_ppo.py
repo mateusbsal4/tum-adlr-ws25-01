@@ -146,8 +146,8 @@ def main():
     
     # Training parameters
     num_episodes = 1_000_000
-    eval_interval = 50
-    num_episodes_per_update = 10
+    eval_interval = 100
+    num_episodes_per_update = 50
     
     # Setup logging
     logger = setup_logger(agent.log_dir, rank) if rank == 0 else None

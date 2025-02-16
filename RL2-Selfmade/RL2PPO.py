@@ -72,6 +72,7 @@ class RL2PPO:
         
         self.gamma = gamma
         self.epsilon = epsilon
+        self.gae_lambda = 0.95
         self.epochs = epochs
         self.batch_size = batch_size
         
@@ -251,6 +252,7 @@ class RL2PPO:
         returns = torch.FloatTensor(returns)
         returns = (returns - returns.mean()) / (returns.std() + 1e-8)
         return returns
+
     
     def collect_episode(self, max_steps=1000):
         # Get the initial observation (although not directly used in the input)
@@ -423,11 +425,18 @@ class GRUNetwork(nn.Module):
             nn.Tanh(),
             nn.Linear(64, output_dim)
         )
+        
+        self.value_gru = nn.GRU(obs_dim, hidden_dim, batch_first=False)
         self.value = nn.Sequential(
-            nn.Linear(obs_dim, 64),
+            nn.Linear(hidden_dim, 64),
             nn.Tanh(),
             nn.Linear(64, 1)
         )
+        #self.value = nn.Sequential(
+        #    nn.Linear(obs_dim, 32),
+        #    nn.Tanh(),
+        #    nn.Linear(32, 1)
+        #)
         
     def forward(self, x, obs, hidden=None):
         if hidden is None:
@@ -435,5 +444,9 @@ class GRUNetwork(nn.Module):
             hidden = torch.zeros(1, batch_size, self.gru.hidden_size, device=x.device)
         output, hidden = self.gru(x, hidden)
         action_logits = self.policy(output)
-        value = self.value(obs)
+
+        value_in, _ = self.value_gru(obs, hidden)
+        value = self.value(value_in)
+
+        #value = self.value(obs)
         return action_logits, value, hidden

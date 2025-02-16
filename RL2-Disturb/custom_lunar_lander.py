@@ -44,8 +44,8 @@ class CustomLunarLander(LunarLanderTargetPos):
     
     def sample_disturbances(self):
         """Sample new random wind power value within defined range"""
-        self.current_wind_power = np.random.uniform(*self.wind_power_range)
-        
+        # self.current_wind_power = np.random.uniform(*self.wind_power_range)
+        self.current_wind_power = 7.0
         # Update current disturbance dictionary
         self.current_disturbance = {
             'wind_power': self.current_wind_power

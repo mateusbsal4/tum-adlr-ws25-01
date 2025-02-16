@@ -103,92 +103,128 @@ def extract_metrics_from_log(log_file):
     return episodes, lengths, rewards, actor_losses, critic_losses, context_losses, eval_rewards
 
 def plot_metrics(episodes, lengths, rewards, actor_losses, critic_losses, context_losses, eval_rewards, save_dir):
-    # Create figure with subplots
-    fig, ((ax1, ax2), (ax3, ax4), (ax5, ax6)) = plt.subplots(3, 2, figsize=(15, 15))
+    # Create figure with subplots for training metrics
+    fig1, ((ax1, ax2), (ax3, ax4), (ax5, ax6)) = plt.subplots(3, 2, figsize=(15, 15))
     
     # Plot episode lengths
-    ax1.plot(episodes, lengths, 'b-', alpha=0.6)
+    ax1.plot(episodes, lengths, 'b-', alpha=0.3)
     ax1.set_xlabel('Episode')
     ax1.set_ylabel('Average Episode Length')
     ax1.set_title('Training Episode Lengths')
     ax1.grid(True)
     
     # Plot moving average of episode lengths
-    window = 50
-    if len(lengths) > window:
-        moving_avg = np.convolve(lengths, np.ones(window)/window, mode='valid')
-        ax1.plot(episodes[window-1:], moving_avg, 'r-', label=f'{window}-episode moving average')
-        ax1.legend()
+    window = 50  # Window size
+    # Calculate moving average from the start
+    weights = np.ones(window) / window
+    moving_avg = np.convolve(lengths, weights, mode='same')
+    ax1.plot(episodes, moving_avg, 'b-', label=f'{window}-episode moving average')
+    ax1.legend()
     
-    # Plot rewards
-    ax2.plot(episodes, rewards, 'g-', alpha=0.6, label='Training')
-    if eval_rewards:
-        # Calculate eval episodes (every 50 episodes)
-        eval_episodes = np.arange(50, 50 * (len(eval_rewards) + 1), 50)
-        ax2.plot(eval_episodes, eval_rewards, 'r-', label='Evaluation')
+    # Plot training rewards
+    ax2.plot(episodes, rewards, 'g-', alpha=0.3, label='Per Episode')
+    moving_avg = np.convolve(rewards, weights, mode='same')
+    ax2.plot(episodes, moving_avg, 'g-', linewidth=2, label=f'{window}-episode moving average')
     ax2.set_xlabel('Episode')
-    ax2.set_ylabel('Reward')
-    ax2.set_title('Training and Evaluation Rewards')
+    ax2.set_ylabel('Training Reward')
+    ax2.set_title('Training Rewards')
     ax2.grid(True)
     ax2.legend()
     
     # Plot actor losses
-    ax3.plot(episodes, actor_losses, 'm-', alpha=0.6)
+    ax3.plot(episodes, actor_losses, 'm-', alpha=0.3)
     ax3.set_xlabel('Episode')
     ax3.set_ylabel('Actor Loss')
     ax3.set_title('Actor Loss')
     ax3.grid(True)
     
     # Plot moving average of actor losses
-    if len(actor_losses) > window:
-        moving_avg = np.convolve(actor_losses, np.ones(window)/window, mode='valid')
-        ax3.plot(episodes[window-1:], moving_avg, 'r-', label=f'{window}-episode moving average')
-        ax3.legend()
+    moving_avg = np.convolve(actor_losses, weights, mode='same')
+    ax3.plot(episodes, moving_avg, 'm-', label=f'{window}-episode moving average')
+    ax3.legend()
     
     # Plot critic losses
-    ax4.plot(episodes, critic_losses, 'c-', alpha=0.6)
+    ax4.plot(episodes, critic_losses, 'c-', alpha=0.3)
     ax4.set_xlabel('Episode')
     ax4.set_ylabel('Critic Loss')
     ax4.set_title('Critic Loss')
     ax4.grid(True)
     
     # Plot moving average of critic losses
-    if len(critic_losses) > window:
-        moving_avg = np.convolve(critic_losses, np.ones(window)/window, mode='valid')
-        ax4.plot(episodes[window-1:], moving_avg, 'r-', label=f'{window}-episode moving average')
-        ax4.legend()
+    moving_avg = np.convolve(critic_losses, weights, mode='same')
+    ax4.plot(episodes, moving_avg, 'c-', label=f'{window}-episode moving average')
+    ax4.legend()
     
     # Plot context losses
     if context_losses:
-        ax5.plot(episodes, context_losses, 'y-', alpha=0.6)
+        ax5.plot(episodes, context_losses, 'y-', alpha=0.3)
         ax5.set_xlabel('Episode')
         ax5.set_ylabel('Context Loss')
         ax5.set_title('Context Loss')
         ax5.grid(True)
         
         # Plot moving average of context losses
-        if len(context_losses) > window:
-            moving_avg = np.convolve(context_losses, np.ones(window)/window, mode='valid')
-            ax5.plot(episodes[window-1:], moving_avg, 'r-', label=f'{window}-episode moving average')
-            ax5.legend()
+        moving_avg = np.convolve(context_losses, weights, mode='same')
+        ax5.plot(episodes, moving_avg, 'y-', label=f'{window}-episode moving average')
+        ax5.legend()
     
-    # Plot reward distributions
-    if len(rewards) > 0:
-        ax6.hist(rewards, bins=50, alpha=0.5, label='Training', color='g')
-        if len(eval_rewards) > 0:
-            ax6.hist(eval_rewards, bins=20, alpha=0.5, label='Evaluation', color='r')
-        ax6.set_xlabel('Reward')
-        ax6.set_ylabel('Count')
-        ax6.set_title('Reward Distributions')
-        ax6.legend()
+    # Plot evaluation rewards
+    if eval_rewards:
+        # Calculate eval episodes (every 50 episodes)
+        eval_episodes = np.arange(50, 50 * (len(eval_rewards) + 1), 50)
+        ax6.plot(eval_episodes, eval_rewards, 'r-', label='Per Evaluation', alpha=0.3)
+        
+        # For evaluation rewards, use a smaller window if needed
+        eval_window = min(window, len(eval_rewards))
+        eval_weights = np.ones(eval_window) / eval_window
+        moving_avg = np.convolve(eval_rewards, eval_weights, mode='same')
+        ax6.plot(eval_episodes, moving_avg, 'r-', linewidth=2, label=f'{eval_window}-episode moving average')
+        ax6.set_xlabel('Episode')
+        ax6.set_ylabel('Evaluation Reward')
+        ax6.set_title('Evaluation Rewards')
         ax6.grid(True)
+        ax6.legend()
     
     plt.tight_layout()
     
-    # Save plot
-    plot_path = os.path.join(save_dir, 'training_metrics.png')
-    plt.savefig(plot_path)
-    print(f"Plot saved as {plot_path}")
+    # Save training metrics plot
+    metrics_path = os.path.join(save_dir, 'training_metrics.png')
+    plt.savefig(metrics_path)
+    plt.close()
+    
+    # Create and save reward distributions plot
+    fig2, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+    
+    # Training rewards distribution
+    ax1.hist(rewards, bins=50, alpha=0.7, color='g')
+    ax1.axvline(np.mean(rewards), color='r', linestyle='dashed', linewidth=2, label=f'Mean: {np.mean(rewards):.1f}')
+    ax1.axvline(np.median(rewards), color='b', linestyle='dashed', linewidth=2, label=f'Median: {np.median(rewards):.1f}')
+    ax1.set_xlabel('Reward')
+    ax1.set_ylabel('Count')
+    ax1.set_title('Training Reward Distribution')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Evaluation rewards distribution
+    if eval_rewards:
+        ax2.hist(eval_rewards, bins=20, alpha=0.7, color='r')
+        ax2.axvline(np.mean(eval_rewards), color='r', linestyle='dashed', linewidth=2, label=f'Mean: {np.mean(eval_rewards):.1f}')
+        ax2.axvline(np.median(eval_rewards), color='b', linestyle='dashed', linewidth=2, label=f'Median: {np.median(eval_rewards):.1f}')
+        ax2.set_xlabel('Reward')
+        ax2.set_ylabel('Count')
+        ax2.set_title('Evaluation Reward Distribution')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    # Save reward distributions plot
+    dist_path = os.path.join(save_dir, 'reward_distributions.png')
+    plt.savefig(dist_path)
+    plt.close()
+    
+    print(f"Training metrics plot saved as {metrics_path}")
+    print(f"Reward distributions plot saved as {dist_path}")
     
     # Also save metrics to file
     metrics_path = os.path.join(save_dir, 'training_metrics.txt')
@@ -200,10 +236,14 @@ def plot_metrics(episodes, lengths, rewards, actor_losses, critic_losses, contex
         f.write(f"Final training reward: {rewards[-1]:.2f}\n")
         f.write(f"Best training reward: {max(rewards):.2f}\n")
         f.write(f"Average training reward: {np.mean(rewards):.2f}\n")
+        f.write(f"Median training reward: {np.median(rewards):.2f}\n")
+        f.write(f"Training reward std: {np.std(rewards):.2f}\n")
         if eval_rewards:
             f.write(f"Best evaluation reward: {max(eval_rewards):.2f}\n")
             f.write(f"Final evaluation reward: {eval_rewards[-1]:.2f}\n")
             f.write(f"Average evaluation reward: {np.mean(eval_rewards):.2f}\n")
+            f.write(f"Median evaluation reward: {np.median(eval_rewards):.2f}\n")
+            f.write(f"Evaluation reward std: {np.std(eval_rewards):.2f}\n")
         f.write(f"Average episode length: {np.mean(lengths):.2f}\n")
         f.write(f"Final actor loss: {actor_losses[-1]:.4f}\n")
         f.write(f"Final critic loss: {critic_losses[-1]:.4f}\n")
@@ -214,6 +254,8 @@ def plot_metrics(episodes, lengths, rewards, actor_losses, critic_losses, contex
         if context_losses:
             f.write(f"Average context loss: {np.mean(context_losses):.4f}\n")
     print(f"Metrics summary saved as {metrics_path}")
+    
+    return metrics_path
 
 def main():
     parser = argparse.ArgumentParser(description='Plot training metrics from log file')

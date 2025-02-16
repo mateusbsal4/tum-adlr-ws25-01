@@ -23,86 +23,66 @@ register(
 class CustomLunarLander(LunarLanderTargetPos):
     def __init__(self, render_mode=None):
         # Initialize with default disturbances
-        self.current_gravity = -10.0
         self.current_wind_power = 0.0
-        self.current_turbulence_power = 0.0
         
         # Call parent constructor with default values
         super().__init__(
             render_mode=render_mode,
-            gravity=self.current_gravity,
+            gravity=-10.0,  # Fixed gravity
             enable_wind=True,
             wind_power=self.current_wind_power,
-            turbulence_power=self.current_turbulence_power
+            turbulence_power=0.0  # No turbulence
         )
         
-        # Define disturbance ranges
-        self.gravity_range = (-11.0, -9.0)  # Gravity variation around -10
+        # Define wind power range
         self.wind_power_range = (0.0, 15.0)  # Wind power from 0 to 15
-        self.turbulence_power_range = (0.0, 1.5)  # Turbulence from 0 to 1.5
         
         # Store current disturbance configuration
         self.current_disturbance = {
-            'gravity': self.current_gravity,
-            'wind_power': self.current_wind_power,
-            'turbulence_power': self.current_turbulence_power
+            'wind_power': self.current_wind_power
         }
     
     def sample_disturbances(self):
-        """Sample new random disturbance values within defined ranges"""
-        self.current_gravity = np.random.uniform(*self.gravity_range)
+        """Sample new random wind power value within defined range"""
         self.current_wind_power = np.random.uniform(*self.wind_power_range)
-        self.current_turbulence_power = np.random.uniform(*self.turbulence_power_range)
         
         # Update current disturbance dictionary
         self.current_disturbance = {
-            'gravity': self.current_gravity,
-            'wind_power': self.current_wind_power,
-            'turbulence_power': self.current_turbulence_power
+            'wind_power': self.current_wind_power
         }
         
         # Update environment parameters
-        self.gravity = self.current_gravity
         self.wind_power = self.current_wind_power
-        self.turbulence_power = self.current_turbulence_power
     
-    def set_disturbances(self, gravity=None, wind_power=None, turbulence_power=None):
-        """Manually set specific disturbance values"""
-        if gravity is not None:
-            self.current_gravity = np.clip(gravity, *self.gravity_range)
+    def set_disturbances(self, wind_power=None):
+        """Manually set specific wind power value"""
         if wind_power is not None:
             self.current_wind_power = np.clip(wind_power, *self.wind_power_range)
-        if turbulence_power is not None:
-            self.current_turbulence_power = np.clip(turbulence_power, *self.turbulence_power_range)
         
         # Update current disturbance dictionary
         self.current_disturbance = {
-            'gravity': self.current_gravity,
-            'wind_power': self.current_wind_power,
-            'turbulence_power': self.current_turbulence_power
+            'wind_power': self.current_wind_power
         }
         
         # Update environment parameters
-        self.gravity = self.current_gravity
         self.wind_power = self.current_wind_power
-        self.turbulence_power = self.current_turbulence_power
     
     def get_current_disturbance(self):
         """Return current disturbance configuration"""
         return self.current_disturbance.copy()
     
     def reset(self, seed=None, options=None):
-        """Reset environment and sample new disturbances"""
-        # Sample new disturbances
+        """Reset environment and sample new wind power"""
+        # Sample new wind power
         self.sample_disturbances()
         
-        # Reset Box2D world with new gravity
+        # Reset Box2D world
         observation, info = super().reset(seed=seed, options=options)
         
         return observation, info
     
     def step(self, action):
-        """Execute environment step with current disturbances"""
+        """Execute environment step with current wind power"""
         state, reward, terminated, truncated, info = super().step(action)
         
         # Add disturbance information to info dict

@@ -19,11 +19,11 @@ class ContextEncoder(nn.Module):
         self.context_mean = nn.Linear(hidden_dim, context_dim)
         self.context_log_std = nn.Linear(hidden_dim, context_dim)
         
-        # Optional: Context reconstruction (if we want to predict actual disturbance values)
-        self.context_decoder = nn.Sequential(
+        # Wind power predictor (single value output)
+        self.wind_predictor = nn.Sequential(
             nn.Linear(context_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 2)  # Predict [wind_power, gravity]
+            nn.Linear(hidden_dim, 1)  # Predict wind_power only
         )
         
     def forward(self, x, hidden=None):
@@ -48,10 +48,10 @@ class ContextEncoder(nn.Module):
         else:
             context = context_mean
             
-        # Predict actual disturbance values (optional)
-        disturbance_pred = self.context_decoder(context)
+        # Predict wind power
+        wind_power = self.wind_predictor(context)
         
-        return context, context_mean, context_log_std, disturbance_pred
+        return context, context_mean, context_log_std, wind_power
 
 class ContextAwarePolicy(nn.Module):
     def __init__(self, state_dim, context_dim, hidden_dim, action_dim):
@@ -222,7 +222,7 @@ class ContextAwarePPO:
             # Convert trajectory to tensor efficiently
             trajectory_tensor = torch.from_numpy(trajectory).unsqueeze(1)  # [seq_len, 1, dim]
             with torch.no_grad():
-                context, context_mean, context_log_std, disturbance_pred = self.context_encoder(trajectory_tensor)
+                context, context_mean, context_log_std, wind_power = self.context_encoder(trajectory_tensor)
                 context = context.squeeze(0)  # Remove batch dimension
         
         return states.tolist(), actions.tolist(), rewards.tolist(), log_probs.tolist(), dones.tolist(), values.tolist(), episode_reward, context, trajectory_tensor
@@ -281,7 +281,7 @@ class ContextAwarePPO:
                     trajectory_masks[:traj_len, i] = 1
                 
                 # Encode contexts
-                contexts, context_means, context_log_stds, disturbance_preds = self.context_encoder(
+                contexts, context_means, context_log_stds, wind_powers = self.context_encoder(
                     padded_trajectories
                 )
                 
@@ -409,20 +409,18 @@ class ContextAwarePPO:
             return 0.0
             
         eval_rewards = []
-        disturbance_losses = []
+        wind_prediction_losses = []
         context = None  # Initial context estimate
         
         for episode in range(num_episodes):
             state = self.env.reset()[0]
             episode_reward = 0
-            disturbance_loss = 0
             
-            # Get actual disturbances from environment
-            actual_disturbances = self.env.get_current_disturbance()
-            print(f"\nEpisode {episode + 1} Disturbances:")
-            print(f"  Actual: gravity={actual_disturbances['gravity']:.3f}, "
-                  f"wind={actual_disturbances['wind_power']:.3f}, "
-                  f"turbulence={actual_disturbances['turbulence_power']:.3f}")
+            # Get actual wind power from environment
+            actual_disturbance = self.env.get_current_disturbance()
+            actual_wind = actual_disturbance['wind_power']
+            print(f"\nEpisode {episode + 1}")
+            print(f"  Actual wind power: {actual_wind:.3f}")
             
             # Pre-allocate trajectory array for max steps
             max_steps = 1000
@@ -430,7 +428,7 @@ class ContextAwarePPO:
             episode_length = 0
             done = False
             
-            for step in range(max_steps):  # Use step counter to ensure we don't exceed max_steps
+            for step in range(max_steps):
                 # Get action using current context estimate
                 action, _, _ = self.get_action(state, context)
                 next_state, reward, done, truncated, _ = self.env.step(action)
@@ -450,37 +448,31 @@ class ContextAwarePPO:
                     # Trim trajectory to current length and convert to tensor
                     traj_tensor = torch.from_numpy(trajectory[:episode_length]).unsqueeze(1)
                     with torch.no_grad():
-                        context, _, _, disturbance_pred = self.context_encoder(traj_tensor)
+                        context, _, _, wind_pred = self.context_encoder(traj_tensor)
                         context = context.squeeze(0)
                         
-                        # Print predicted disturbances every 100 steps
-                        if step % 100 == 0:
-                            # Predicted disturbances: first value is wind_power, second is gravity
-                            pred_wind, pred_gravity = disturbance_pred.squeeze().numpy()
-                            # Scale predictions to match actual ranges
-                            pred_wind = pred_wind * 7.5 + 7.5  # Scale to [0, 15]
-                            pred_gravity = pred_gravity * 1.0 - 10.0  # Scale to [-11, -9]
-                            print(f"  Step {step:4d} Predicted: gravity={pred_gravity:.3f}, wind={pred_wind:.3f}")
+                        # # Print predicted wind power every 100 steps
+                        # if step % 100 == 0:
+                        #     # Scale prediction to match actual range [0, 15]
+                        #     pred_wind = wind_pred.item() * 7.5 + 7.5
+                        #     print(f"  Step {step:4d} Predicted wind: {pred_wind:.3f}")
                 
-                if done or step == max_steps - 1:  # Break if done or reached max steps
-                    # Print final predictions
-                    pred_wind, pred_gravity = disturbance_pred.squeeze().numpy()
-                    pred_wind = pred_wind * 7.5 + 7.5  # Scale to [0, 15]
-                    pred_gravity = pred_gravity * 1.0 - 10.0  # Scale to [-11, -9]
-                    disturbance_loss = np.sqrt((pred_wind - actual_disturbances['wind_power'])**2 + (pred_gravity - actual_disturbances['gravity'])**2)
-                    print(f"  Final Predicted: gravity={pred_gravity:.3f}, wind={pred_wind:.3f}")
-                    print(f"  Disturbance Loss: {disturbance_loss:.2f}")
+                if done or step == max_steps - 1:
+                    # Print final prediction
+                    pred_wind = wind_pred.item() * 7.5 + 7.5
+                    wind_loss = abs(pred_wind - actual_wind)
+                    print(f"  Final Predicted wind: {pred_wind:.3f}")
+                    print(f"  Wind Prediction Error: {wind_loss:.3f}")
                     print(f"  Episode Length: {episode_length}, Reward: {episode_reward:.2f}")
                     break
             
-            # Save evaluation metrics
             eval_rewards.append(episode_reward)
-            disturbance_losses.append(disturbance_loss)
-            
+            wind_prediction_losses.append(wind_loss)
+        
         mean_reward = np.mean(eval_rewards)
         print(f"\nEvaluation Summary:")
         print(f"Reward over {num_episodes} episodes: {mean_reward:.2f} +- {np.std(eval_rewards):.2f}")
-        print(f"Disturbance Loss: {np.mean(disturbance_losses):.2f}")
+        print(f"Wind Prediction Error: {np.mean(wind_prediction_losses):.3f} +- {np.std(wind_prediction_losses):.3f}")
         return mean_reward
     
     def save_model(self, suffix=''):

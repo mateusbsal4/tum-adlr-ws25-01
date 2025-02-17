@@ -9,6 +9,7 @@ import os
 from datetime import datetime
 from mpi4py import MPI
 from custom_lunar_lander import CustomLunarLander
+import matplotlib.pyplot as plt
 
 class ContextEncoder(nn.Module):
     def __init__(self, input_dim, hidden_dim, context_dim):
@@ -19,13 +20,18 @@ class ContextEncoder(nn.Module):
         self.context_mean = nn.Linear(hidden_dim, context_dim)
         self.context_log_std = nn.Linear(hidden_dim, context_dim)
         
-        # Wind power predictor (single value output)
-        self.wind_predictor = nn.Sequential(
+        # Disturbance predictor network
+        self.disturbance_predictor = nn.Sequential(
             nn.Linear(context_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 1),  # Predict wind_power directly
-            nn.Sigmoid()  # Scale output to [0,1], will be rescaled to [0,15]
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 2)  # Predict [wind_power, target_x]
         )
+        
+        # Output activation layers
+        self.wind_activation = nn.Sigmoid()  # Scale wind to [0,1]
+        self.pos_activation = nn.Sigmoid()   # Scale position to [0,1]
         
     def forward(self, x, hidden=None):
         # x shape: [seq_len, batch_size, input_dim]
@@ -49,10 +55,12 @@ class ContextEncoder(nn.Module):
         else:
             context = context_mean
             
-        # Predict wind power (scaled to [0,15])
-        wind_power = self.wind_predictor(context) * 15.0
+        # Predict disturbances
+        disturbance_pred = self.disturbance_predictor(context)
+        wind_power = self.wind_activation(disturbance_pred[..., 0]) * 15.0  # Scale to [0,15]
+        target_pos = self.pos_activation(disturbance_pred[..., 1]) * 0.6 + 0.2  # Scale to [0.2,0.8]
         
-        return context, context_mean, context_log_std, wind_power
+        return context, context_mean, context_log_std, wind_power, target_pos
 
 class ContextAwarePolicy(nn.Module):
     def __init__(self, state_dim, context_dim, hidden_dim, action_dim):
@@ -264,10 +272,9 @@ class ContextAwarePPO:
         
         # Encode trajectory to get context
         if episode_length > 0:
-            # Convert trajectory to tensor efficiently
             trajectory_tensor = torch.from_numpy(trajectory).unsqueeze(1)  # [seq_len, 1, dim]
             with torch.no_grad():
-                context, context_mean, context_log_std, wind_power = self.context_encoder(trajectory_tensor)
+                context, context_mean, context_log_std, wind_power, target_pos = self.context_encoder(trajectory_tensor)
                 context = context.squeeze(0)  # Remove batch dimension
         
         return states, actions, rewards, log_probs, dones, values, episode_reward, context, trajectory_tensor
@@ -326,7 +333,7 @@ class ContextAwarePPO:
                     trajectory_masks[:traj_len, i] = 1
                 
                 # Encode contexts
-                contexts, context_means, context_log_stds, wind_powers = self.context_encoder(
+                contexts, context_means, context_log_stds, wind_powers, target_positions = self.context_encoder(
                     padded_trajectories
                 )
                 
@@ -456,11 +463,10 @@ class ContextAwarePPO:
             
         eval_rewards = []
         wind_prediction_errors = []
-        target_errors = []
-        context = None  # Initial context estimate
+        position_prediction_errors = []
+        context = None
         
         for episode in range(num_episodes):
-            # Environment will sample new wind power and target position on reset
             state = self.env.reset()[0]
             actual_wind = self.env.wind_power
             actual_target = self.env.target_x
@@ -469,7 +475,6 @@ class ContextAwarePPO:
             print(f"  Actual wind power: {actual_wind:.3f}")
             print(f"  Actual target position: {actual_target:.3f}")
             
-            # Pre-allocate trajectory array for max steps
             max_steps = 1000
             trajectory = np.zeros((max_steps, self.state_dim + self.action_dim + 1), dtype=np.float32)
             episode_length = 0
@@ -477,11 +482,9 @@ class ContextAwarePPO:
             episode_reward = 0
             
             for step in range(max_steps):
-                # Get action using current context estimate
                 action, _, _ = self.get_action(state, context)
                 next_state, reward, done, truncated, _ = self.env.step(action)
                 
-                # Store transition in trajectory array
                 action_one_hot = np.zeros(self.action_dim, dtype=np.float32)
                 action_one_hot[action] = 1
                 trajectory[episode_length] = np.concatenate([state, action_one_hot, [reward]])
@@ -493,31 +496,39 @@ class ContextAwarePPO:
                 
                 # Update context estimate using trajectory so far
                 if episode_length > 0:
-                    # Trim trajectory to current length and convert to tensor
                     traj_tensor = torch.from_numpy(trajectory[:episode_length]).unsqueeze(1)
                     with torch.no_grad():
-                        context, _, _, wind_pred = self.context_encoder(traj_tensor)
+                        context, _, _, wind_pred, pos_pred = self.context_encoder(traj_tensor)
                         context = context.squeeze(0)
                         
-                        # Print predictions every 100 steps
-                        if step % 100 == 0:
-                            print(f"  Step {step:4d} Predicted wind: {wind_pred.item():.3f}")
+                        # # Print predictions every 100 steps
+                        # if step % 100 == 0:
+                        #     print(f"  Step {step:4d}:")
+                        #     print(f"    Predicted wind: {wind_pred.item():.3f}")
+                        #     print(f"    Predicted position: {pos_pred.item():.3f}")
                 
                 if done or step == max_steps - 1:
                     wind_error = abs(wind_pred.item() - actual_wind)
-                    print(f"  Final Predicted wind: {wind_pred.item():.3f}")
-                    print(f"  Wind Prediction Error: {wind_error:.3f}")
-                    print(f"  Episode Length: {episode_length}, Reward: {episode_reward:.2f}")
+                    pos_error = abs(pos_pred.item() - actual_target)
+                    print(f"\n  Final Predictions:")
+                    print(f"    Wind Power - Predicted: {wind_pred.item():.3f}, Actual: {actual_wind:.3f}, Error: {wind_error:.3f}")
+                    print(f"    Target Pos - Predicted: {pos_pred.item():.3f}, Actual: {actual_target:.3f}, Error: {pos_error:.3f}")
+                    print(f"    Episode Length: {episode_length}, Reward: {episode_reward:.2f}")
                     wind_prediction_errors.append(wind_error)
+                    position_prediction_errors.append(pos_error)
                     break
             
             eval_rewards.append(episode_reward)
         
         mean_reward = np.mean(eval_rewards)
         mean_wind_error = np.mean(wind_prediction_errors)
+        mean_pos_error = np.mean(position_prediction_errors)
+        
         print(f"\nEvaluation Summary:")
         print(f"Average Reward: {mean_reward:.2f} ± {np.std(eval_rewards):.2f}")
         print(f"Average Wind Prediction Error: {mean_wind_error:.3f} ± {np.std(wind_prediction_errors):.3f}")
+        print(f"Average Position Prediction Error: {mean_pos_error:.3f} ± {np.std(position_prediction_errors):.3f}")
+        
         return mean_reward
     
     def save_model(self, suffix=''):
@@ -573,3 +584,49 @@ class ContextAwarePPO:
             instance.log_dir = checkpoint['log_dir']
         
         return instance 
+
+    def plot_disturbance_reconstruction(self, episode_data):
+        """
+        Plot the actual vs predicted wind power and target position over an episode.
+        
+        Args:
+            episode_data: dict containing trajectories and actual values
+        """
+        trajectory = episode_data['trajectory']
+        actual_wind = episode_data['actual_wind']
+        actual_target = episode_data['actual_target']
+        
+        # Get predictions for each timestep
+        wind_preds = []
+        pos_preds = []
+        
+        for t in range(len(trajectory)):
+            traj_tensor = torch.from_numpy(trajectory[:t+1]).unsqueeze(1)
+            with torch.no_grad():
+                _, _, _, wind_pred, pos_pred = self.context_encoder(traj_tensor)
+                wind_preds.append(wind_pred.item())
+                pos_preds.append(pos_pred.item())
+        
+        timesteps = np.arange(len(trajectory))
+        
+        # Create the plot
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+        
+        # Plot wind power
+        ax1.plot(timesteps, [actual_wind] * len(timesteps), 'r--', label='Actual Wind')
+        ax1.plot(timesteps, wind_preds, 'b-', label='Predicted Wind')
+        ax1.set_xlabel('Timestep')
+        ax1.set_ylabel('Wind Power')
+        ax1.legend()
+        ax1.grid(True)
+        
+        # Plot target position
+        ax2.plot(timesteps, [actual_target] * len(timesteps), 'r--', label='Actual Target')
+        ax2.plot(timesteps, pos_preds, 'b-', label='Predicted Target')
+        ax2.set_xlabel('Timestep')
+        ax2.set_ylabel('Target Position')
+        ax2.legend()
+        ax2.grid(True)
+        
+        plt.tight_layout()
+        return fig 

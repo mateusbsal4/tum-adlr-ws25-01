@@ -1,27 +1,26 @@
 import gymnasium as gym
-from stable_baselines3 import PPO
-from lib.pol_eval import evaluate_policy
 import logging
 import os
 import matplotlib.pyplot as plt
 import numpy as np
-from stable_baselines3.common.callbacks import BaseCallback
-import datetime
 from gymnasium import Wrapper
 import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Normal
+from custom_lunar_lander import CustomLunarLander  # Import the custom environment
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train or evaluate a LunarLander agent with variable wind')
     parser.add_argument('mode', choices=['train', 'eval'], help='Mode to run the script in')
     parser.add_argument('--run-name', type=str, required=True, help='Name of the training/evaluation run')
-    parser.add_argument('--timesteps', type=int, default=5_000_000, help='Total timesteps for training')
+    parser.add_argument('--timesteps', type=int, default=1_000_000_000, help='Total timesteps for training')
     parser.add_argument('--eval-episodes', type=int, default=10, help='Number of episodes for evaluation')
     parser.add_argument('--render', action='store_true',
                         help='Whether to render the environment during training/evaluation')
+    parser.add_argument('--random-target', action='store_true',
+                        help='Enable random landing target position')
     return parser.parse_args()
 
 def setup_logging(run_name: str):
@@ -29,117 +28,81 @@ def setup_logging(run_name: str):
     base_log_dir = os.path.join("logs", run_name)
     os.makedirs(base_log_dir, exist_ok=True)
 
-    log_filename = os.path.join(base_log_dir, 'train_log.txt')
-    logging.basicConfig(
-        filename=log_filename,
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        filemode='w'
-    )
-    print('Starting session:', run_name)
+    # Create a logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # Remove any existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # Create file handler
+    fh = logging.FileHandler(os.path.join(base_log_dir, 'train_log.txt'), mode='w')
+    fh.setLevel(logging.INFO)
+    
+    # Create console handler
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    
+    # Create formatter
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+    
+    # Add handlers to logger
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+    
     logging.info(f"Starting session: {run_name}")
 
-class MetricsCallback(BaseCallback):
-    def __init__(self, run_name, verbose=0):
-        super().__init__(verbose)
-        self.run_name = run_name
-        self.rewards = []
-        self.ep_lengths = []
-        self.critic_losses = []
-        self.wind_speeds = []
-        self.checkpoint_count = 0
-        self.best_mean_reward = -np.inf
-        
-    def _on_step(self):
-        if self.n_calls % self.model.n_steps == 0:
-            if len(self.model.ep_info_buffer) > 0:
-                # Calculate metrics
-                mean_reward = np.mean([ep['r'] for ep in self.model.ep_info_buffer])
-                mean_ep_length = np.mean([ep['l'] for ep in self.model.ep_info_buffer])
-                critic_loss = self.model.logger.name_to_value.get('train/value_loss', None)
-                current_wind = self.training_env.get_attr('current_wind')[0]
-                
-                # Store metrics
-                self.rewards.append(mean_reward)
-                self.ep_lengths.append(mean_ep_length)
-                self.critic_losses.append(critic_loss)
-                self.wind_speeds.append(current_wind)
-                
-                # Log to file
-                logging.info(f"Steps: {self.n_calls}")
-                logging.info(f"Mean reward: {mean_reward:.2f}")
-                logging.info(f"Mean episode length: {mean_ep_length:.2f}")
-                logging.info(f"Critic loss: {critic_loss if critic_loss is not None else 'N/A'}")
-                logging.info(f"Wind speed: {current_wind:.2f}")
-                
-                # Save checkpoint if we have a new best model
-                if mean_reward > self.best_mean_reward:
-                    self.best_mean_reward = mean_reward
-                    self.checkpoint_count += 1
-                    checkpoint_dir = os.path.join("models", self.run_name, "checkpoints")
-                    os.makedirs(checkpoint_dir, exist_ok=True)
-                    checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{self.checkpoint_count}")
-                    self.model.save(checkpoint_path)
-                    logging.info(f"Saved new best model checkpoint: {checkpoint_path}")
-                    logging.info(f"New best mean reward: {self.best_mean_reward:.2f}")
-                
-                # Save current metrics
-                self.save_metrics()
-                
-        return True
+def plot_training_progress(rewards, ep_lengths, wind_speeds, plots_dir):
+    """Plot training metrics."""
+    plt.figure(figsize=(12, 6))
+    
+    # Plot training rewards
+    steps = np.arange(len(rewards)) * 2000  # num_steps = 2000
+    plt.plot(steps, rewards, 'b-', alpha=0.3, label='Training (per update)')
+    
+    # Calculate and plot moving average of training rewards
+    window = 50
+    if len(rewards) >= window:
+        ma_rewards = np.convolve(rewards, np.ones(window)/window, mode='valid')
+        ma_steps = steps[window-1:len(ma_rewards)+window-1]
+        plt.plot(ma_steps, ma_rewards, 'b-', linewidth=2, 
+                label=f'Training ({window}-update moving average)')
+    
+    plt.title('Training Progress')
+    plt.xlabel('Steps')
+    plt.ylabel('Reward')
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    
+    # Save plot
+    plt.savefig(os.path.join(plots_dir, 'training_progress.png'), dpi=300, bbox_inches='tight')
+    plt.close()
 
-    def save_metrics(self):
-        metrics_dir = os.path.join("logs", self.run_name, "training_metrics")
-        os.makedirs(metrics_dir, exist_ok=True)
-        
-        np.save(os.path.join(metrics_dir, "rewards.npy"), np.array(self.rewards))
-        np.save(os.path.join(metrics_dir, "ep_lengths.npy"), np.array(self.ep_lengths))
-        np.save(os.path.join(metrics_dir, "critic_losses.npy"), np.array(self.critic_losses))
-        np.save(os.path.join(metrics_dir, "wind_speeds.npy"), np.array(self.wind_speeds))
-        
-        # Save evaluation rewards if they exist
-        if hasattr(self.model, 'eval_rewards') and len(self.model.eval_rewards) > 0:
-            np.save(os.path.join(metrics_dir, "eval_rewards.npy"), np.array(self.model.eval_rewards))
-            np.save(os.path.join(metrics_dir, "eval_steps.npy"), np.array(self.model.eval_steps))
+def save_metrics(metrics_dir, rewards, ep_lengths, wind_speeds):
+    """Save training metrics to files."""
+    np.save(os.path.join(metrics_dir, "rewards.npy"), np.array(rewards))
+    np.save(os.path.join(metrics_dir, "ep_lengths.npy"), np.array(ep_lengths))
+    np.save(os.path.join(metrics_dir, "wind_speeds.npy"), np.array(wind_speeds))
 
-class RandomWindLander(Wrapper):
-    """Wrapper for LunarLander that changes wind speed each episode."""
-    def __init__(self, env, min_wind=0.0, max_wind=15.0):
-        super().__init__(env)
-        self.min_wind = min_wind
-        self.max_wind = max_wind
-        self.current_wind = None
-        
-    def reset(self, **kwargs):
-        # Sample new wind speed for this episode
-        self.current_wind = np.random.uniform(self.min_wind, self.max_wind)
-        self.env.unwrapped.wind_power = self.current_wind
-        
-        # Log the new wind speed
-        logging.info(f"New episode starting with wind speed: {self.current_wind:.2f}")
-        
-        return self.env.reset(**kwargs)
 
 def create_env(render_mode=None):
-    """Create the Lunar Lander environment with random wind."""
-    env_kwargs = {
-        "render_mode": render_mode,
-        "wind_power": 7.0  # Initial wind power (will be overridden)
-    }
-    base_env = gym.make("LunarLander-v2", **env_kwargs)
-    return RandomWindLander(base_env, min_wind=0.0, max_wind=15.0)
+    """Create the custom Lunar Lander environment."""
+    return CustomLunarLander(render_mode=render_mode)
 
 class ActorCritic(nn.Module):
     def __init__(self, state_dim, action_dim, hidden_dim=64):
         super().__init__()
         
-        # Actor network (policy)
+        # Actor network (policy) - outputs logits for discrete actions
         self.actor = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
             nn.Tanh(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.Tanh(),
-            nn.Linear(hidden_dim, action_dim),
+            nn.Linear(hidden_dim, action_dim)
         )
         
         # Critic network (value function)
@@ -151,34 +114,32 @@ class ActorCritic(nn.Module):
             nn.Linear(hidden_dim, 1)
         )
         
-        # Action log standard deviations (learnable)
-        self.log_std = nn.Parameter(torch.zeros(action_dim))
-        
     def forward(self, state):
-        # Returns action mean and value
-        action_mean = self.actor(state)
+        # Returns action logits and value
+        action_logits = self.actor(state)
         value = self.critic(state)
-        return action_mean, value
+        return action_logits, value
     
     def evaluate_actions(self, state, action):
-        action_mean, value = self(state)
-        action_std = torch.exp(self.log_std)
+        action_logits, value = self(state)
         
-        dist = Normal(action_mean, action_std)
-        log_prob = dist.log_prob(action).sum(dim=-1)
-        entropy = dist.entropy().sum(dim=-1)
+        # Use categorical distribution for discrete actions
+        dist = torch.distributions.Categorical(logits=action_logits)
+        log_prob = dist.log_prob(action)
+        entropy = dist.entropy()
         
         return log_prob, entropy, value
     
     def get_action(self, state, deterministic=False):
-        action_mean, value = self(state)
+        action_logits, value = self(state)
         
         if deterministic:
-            return action_mean, value
-        
-        action_std = torch.exp(self.log_std)
-        dist = Normal(action_mean, action_std)
-        action = dist.sample()
+            # Choose action with highest probability
+            action = torch.argmax(action_logits, dim=-1)
+        else:
+            # Sample from categorical distribution
+            dist = torch.distributions.Categorical(logits=action_logits)
+            action = dist.sample()
         
         return action, value
 
@@ -283,6 +244,11 @@ class PPO:
     def learn(self, env, total_timesteps, callback=None, eval_env=None, eval_freq=10, eval_episodes=5):
         """Train the model and optionally evaluate it periodically."""
         num_steps = 2000  # Steps per update
+        
+        # Initialize callback
+        if callback is not None:
+            callback.init_callback(model=self, env=env)
+        
         states = torch.zeros((num_steps,) + env.observation_space.shape).to(self.device)
         actions = torch.zeros((num_steps,) + env.action_space.shape).to(self.device)
         rewards = torch.zeros(num_steps).to(self.device)
@@ -314,6 +280,16 @@ class PPO:
                 
                 state = torch.FloatTensor(next_state).to(self.device)
                 
+                # Call callback with current locals and globals
+                if callback is not None:
+                    locals_ = {
+                        'step': step,
+                        'update': update,
+                        'rewards': rewards,
+                        'dones': dones
+                    }
+                    callback._on_step(locals_, globals())
+                
                 if done:
                     state, _ = env.reset()
                     state = torch.FloatTensor(state).to(self.device)
@@ -329,9 +305,6 @@ class PPO:
             # Train on collected data
             self.train_on_batch(states, actions, values, log_probs, advantages, returns)
             
-            if callback is not None:
-                callback._on_step()
-            
             # Evaluate if it's time and we have an evaluation environment
             if eval_env is not None and update > 0 and update % eval_freq == 0:
                 mean_reward, std_reward = evaluate_model(self, eval_env, "current", num_episodes=eval_episodes)
@@ -340,6 +313,8 @@ class PPO:
                 # Store evaluation results
                 self.eval_rewards.append(mean_reward)
                 self.eval_steps.append(update * num_steps)
+        
+        return self
     
     def predict(self, state, deterministic=False):
         state = torch.FloatTensor(state).to(self.device)
@@ -355,9 +330,23 @@ class PPO:
 
 def train_model(env, run_name, total_timesteps):
     """Initialize and train the PPO model."""
-    # Create evaluation environment with different wind range
+    # Create evaluation environment
     eval_env = create_env()
-    # eval_env = RandomWindLander(eval_env.unwrapped, min_wind=0.0, max_wind=15.0)  # Explicit wind range
+    
+    # Setup metrics tracking
+    training_rewards = []  # Renamed to avoid confusion
+    ep_lengths = []
+    wind_speeds = []
+    best_mean_reward = -np.inf
+    checkpoint_count = 0
+    
+    # Setup directories
+    metrics_dir = os.path.join("logs", run_name, "training_metrics")
+    plots_dir = os.path.join("logs", run_name, "plots")
+    checkpoint_dir = os.path.join("models", run_name, "checkpoints")
+    os.makedirs(metrics_dir, exist_ok=True)
+    os.makedirs(plots_dir, exist_ok=True)
+    os.makedirs(checkpoint_dir, exist_ok=True)
     
     model = PPO(
         env.observation_space.shape[0],
@@ -374,30 +363,122 @@ def train_model(env, run_name, total_timesteps):
         device="cuda" if torch.cuda.is_available() else "cpu"
     )
     
-    metrics_callback = MetricsCallback(run_name)
-    
     try:
         print("Training the model...")
-        model.learn(
-            env, 
-            total_timesteps=total_timesteps, 
-            callback=metrics_callback,
-            eval_env=eval_env,
-            eval_freq=10,  # Evaluate every 10 updates
-            eval_episodes=5  # Use 5 episodes for each evaluation
-        )
+        
+        # Training loop
+        num_steps = 2000  # Steps per update
+        total_updates = total_timesteps // num_steps
+        
+        for update in range(total_updates):
+            # Collect episode data
+            episode_rewards = []
+            episode_lengths = []
+            current_wind = env.get_wind_power()
+            current_target = env.target_x
+            
+            # Log current settings
+            print(f"\nUpdate {update} - Wind: {current_wind:.2f}, Target: {current_target:.2f}")
+            logging.info(f"\nUpdate {update} - Wind: {current_wind:.2f}, Target: {current_target:.2f}")
+            
+            # These are for collecting the current batch of transitions
+            states = []
+            actions = []
+            rewards_buffer = []
+            values = []
+            log_probs = []
+            dones = []
+            
+            state, _ = env.reset()
+            episode_length = 0
+            episode_reward = 0
+            
+            # Collect steps
+            for step in range(num_steps):
+                state_tensor = torch.FloatTensor(state).to(model.device)
+                with torch.no_grad():
+                    action, value = model.policy.get_action(state_tensor)
+                    log_prob, _, _ = model.policy.evaluate_actions(state_tensor.unsqueeze(0), action.unsqueeze(0))
+                
+                next_state, reward, done, _, _ = env.step(action.cpu().numpy())
+                
+                states.append(state)
+                actions.append(action)
+                rewards_buffer.append(reward)
+                values.append(value)
+                log_probs.append(log_prob)
+                dones.append(done)
+                
+                episode_length += 1
+                episode_reward += reward
+                
+                if done:
+                    episode_rewards.append(episode_reward)
+                    episode_lengths.append(episode_length)
+                    state, _ = env.reset()
+                    episode_length = 0
+                    episode_reward = 0
+                else:
+                    state = next_state
+            
+            # Convert to tensors for training
+            states_tensor = torch.FloatTensor(np.array(states)).to(model.device)
+            actions_tensor = torch.stack(actions)
+            rewards_tensor = torch.FloatTensor(rewards_buffer).to(model.device)
+            values_tensor = torch.stack(values)
+            log_probs_tensor = torch.stack(log_probs)
+            dones_tensor = torch.FloatTensor(dones).to(model.device)
+            
+            # Update policy
+            model.train_on_batch(states_tensor, actions_tensor, values_tensor, 
+                               log_probs_tensor, rewards_tensor, dones_tensor)
+            
+            # Log metrics
+            if len(episode_rewards) > 0:
+                mean_reward = np.mean(episode_rewards)
+                mean_length = np.mean(episode_lengths)
+                
+                training_rewards.append(mean_reward)  # Using the list for metrics
+                ep_lengths.append(mean_length)
+                wind_speeds.append(current_wind)
+                
+                logging.info(f"Update: {update}")
+                logging.info(f"Mean reward: {mean_reward:.2f}")
+                logging.info(f"Mean episode length: {mean_length:.2f}")
+                logging.info(f"Number of episodes: {len(episode_rewards)}")
+                logging.info(f"Wind speed: {current_wind:.2f}")
+                logging.info(f"Target position: {current_target:.2f}")
+                
+                # Save best model
+                if mean_reward > best_mean_reward:
+                    best_mean_reward = mean_reward
+                    checkpoint_count += 1
+                    checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{checkpoint_count}")
+                    model.save(checkpoint_path)
+                    logging.info(f"Saved new best model checkpoint: {checkpoint_path}")
+                    logging.info(f"New best mean reward: {best_mean_reward:.2f}")
+            
+            # Evaluate periodically
+            if update % 10 == 0:
+                eval_reward, eval_std = evaluate_model(model, eval_env, run_name, num_episodes=5)
+                logging.info(f"Evaluation - Mean reward: {eval_reward:.2f} ± {eval_std:.2f}")
+            
+            # Save and plot metrics
+            plot_training_progress(training_rewards, ep_lengths, wind_speeds, plots_dir)
+            save_metrics(metrics_dir, training_rewards, ep_lengths, wind_speeds)
+            
         print("Training completed.")
+        
     except KeyboardInterrupt:
         print("Training interrupted.")
     finally:
-        metrics_callback.save_metrics()
-        eval_env.close()
-        
-        # Save final model
+        # Save final model and metrics
         model_path = os.path.join("models", run_name, "final_model")
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
         model.save(model_path)
         print(f"Model saved to {model_path}")
+        
+        eval_env.close()
     
     return model
 
@@ -412,7 +493,7 @@ def evaluate_model(model, env, run_name, num_episodes=10):
         episode_reward = 0
         
         # Get initial wind speed for this episode
-        current_wind = env.current_wind
+        current_wind = env.get_wind_power()
         episode_winds.append(current_wind)
         print(f"Episode {episode + 1} - Wind Speed: {current_wind:.2f}")
         logging.info(f"Episode {episode + 1} - Wind Speed: {current_wind:.2f}")
@@ -469,7 +550,7 @@ def render_agent(model, env, run_name, num_episodes=10):
         done = False
         
         # Get and log wind speed for this episode
-        current_wind = env.current_wind
+        current_wind = env.get_wind_power()
         print(f"\nRendering Episode {episode + 1} - Wind Speed: {current_wind:.2f}")
         logging.info(f"Rendering Episode {episode + 1} - Wind Speed: {current_wind:.2f}")
         
@@ -501,20 +582,20 @@ def main():
     args = parse_args()
     setup_logging(args.run_name)
     
-    if args.render:
-        render_mode = "human"
-    else:
-        render_mode = "rgb_array"
+    render_mode = "human" if args.render else None
             
     if args.mode == 'train':
-        # Create training environment
-        env = create_env()
+        # Create base environment
+        env = create_env(render_mode=render_mode)
         
         # Train the model
-        model = train_model(env, args.run_name, total_timesteps=args.timesteps)
+        model = train_model(
+            env, 
+            args.run_name, 
+            total_timesteps=args.timesteps
+        )
         
-        
-        # Create evaluation environment
+        # Create evaluation environment with rendering
         eval_env = create_env(render_mode=render_mode)
         
         # Evaluate the model
@@ -533,7 +614,7 @@ def main():
         if not os.path.exists(model_path + ".pt"):
             raise FileNotFoundError(f"No model found at {model_path}")
         
-        # Create evaluation environment
+        # Create evaluation environment with rendering
         eval_env = create_env(render_mode=render_mode)
         
         # Load and evaluate the model

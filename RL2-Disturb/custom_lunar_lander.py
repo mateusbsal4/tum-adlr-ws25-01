@@ -22,72 +22,28 @@ register(
 
 class CustomLunarLander(LunarLanderTargetPos):
     def __init__(self, render_mode=None):
-        # Initialize with default disturbances
-        self.current_wind_power = 0.0
-        
-        # Call parent constructor with default values
         super().__init__(
             render_mode=render_mode,
-            gravity=-10.0,  # Fixed gravity
-            enable_wind=True,
-            wind_power=self.current_wind_power,
-            turbulence_power=0.0  # No turbulence
+            enable_wind=True  # Enable wind in parent class
         )
+        self.target_x = 0.5  # Default target position
+        self.wind_power = 0.0  # Default wind power
         
-        # Define wind power range
-        self.wind_power_range = (0.0, 15.0)  # Wind power from 0 to 15
-        
-        # Store current disturbance configuration
-        self.current_disturbance = {
-            'wind_power': self.current_wind_power
-        }
-    
-    def sample_disturbances(self):
-        """Sample new random wind power value within defined range"""
-        self.current_wind_power = np.random.uniform(*self.wind_power_range)
-        
-        # Update current disturbance dictionary
-        self.current_disturbance = {
-            'wind_power': self.current_wind_power
-        }
-        
-        # Update environment parameters
-        self.wind_power = self.current_wind_power
-    
-    def set_disturbances(self, wind_power=None):
-        """Manually set specific wind power value"""
-        if wind_power is not None:
-            self.current_wind_power = np.clip(wind_power, *self.wind_power_range)
-        
-        # Update current disturbance dictionary
-        self.current_disturbance = {
-            'wind_power': self.current_wind_power
-        }
-        
-        # Update environment parameters
-        self.wind_power = self.current_wind_power
-    
-    def get_current_disturbance(self):
-        """Return current disturbance configuration"""
-        return self.current_disturbance.copy()
-    
     def reset(self, seed=None, options=None):
-        """Reset environment while keeping the current wind power unless explicitly requested"""
-        # Only sample new wind power if requested through options
-        if options and options.get('sample_new_wind', False):
-            self.sample_disturbances()
+        """Reset the environment with current target position."""
+        # Update target position in parent class
+        self.target_x = np.random.uniform(0.2, 0.8)
+        self.wind_power = np.random.uniform(5.0, 10.0)
         
-        # Reset Box2D world
-        observation, info = super().reset(seed=seed, options=options)
-        
-        return observation, info
+        # Reset environment
+        return super().reset(seed=seed, options=options)
+    
+    def get_wind_power(self):
+        return self.wind_power
+
     
     def step(self, action):
-        """Execute environment step with current wind power"""
         state, reward, terminated, truncated, info = super().step(action)
-        
-        # Add disturbance information to info dict
-        info['disturbance'] = self.get_current_disturbance()
         
         return state, reward, terminated, truncated, info
 

@@ -23,7 +23,8 @@ class ContextEncoder(nn.Module):
         self.wind_predictor = nn.Sequential(
             nn.Linear(context_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 1)  # Predict wind_power only
+            nn.Linear(hidden_dim, 1),  # Predict wind_power directly
+            nn.Sigmoid()  # Scale output to [0,1], will be rescaled to [0,15]
         )
         
     def forward(self, x, hidden=None):
@@ -48,8 +49,8 @@ class ContextEncoder(nn.Module):
         else:
             context = context_mean
             
-        # Predict wind power
-        wind_power = self.wind_predictor(context)
+        # Predict wind power (scaled to [0,15])
+        wind_power = self.wind_predictor(context) * 15.0
         
         return context, context_mean, context_log_std, wind_power
 
@@ -364,81 +365,70 @@ class ContextAwarePPO:
         
         return avg_actor_loss, avg_critic_loss, avg_context_loss
     
-    def train_episode(self, num_episodes_per_update=4):
-        total_reward = 0
-        total_length = 0
-        
-        all_states = []
-        all_actions = []
-        all_log_probs = []
-        all_returns = []
-        all_contexts = []
-        all_trajectories = []
+    def train_episode(self, num_episodes_per_update=1):
+        # Single episode collection
+        states = []
+        actions = []
+        log_probs = []
+        returns = []
+        contexts = []
+        trajectories = []
         
         context = None  # Initial context estimate
         
-        # Sample new wind speed at the start of the update
-        if isinstance(self.env, CustomLunarLander):
-            self.env.sample_disturbances()
-            if self.rank == 0:  # Only print from rank 0
-                wind = self.env.get_current_disturbance()['wind_power']
-                print(f"\nNew wind power for this update: {wind:.3f}")
+        # Environment will sample new wind power and target position on reset
+        state = self.env.reset()[0]
+        if self.rank == 0:  # Only print from rank 0
+            print(f"\nNew wind power: {self.env.wind_power:.3f}")
+            print(f"New target position: {self.env.target_x:.3f}")
         
-        for _ in range(num_episodes_per_update):
-            # Don't sample new wind speed during episode resets within the same update
-            states, actions, rewards, log_probs, dones, values, episode_reward, new_context, trajectory = self.collect_episode(context)
-            
-            returns = self.compute_returns(rewards, dones, values)
-            
-            all_states.append(states)
-            all_actions.append(actions)
-            all_log_probs.append(log_probs)
-            all_returns.append(returns.tolist())
-            all_contexts.append(new_context)
-            all_trajectories.append(trajectory)
-            
-            total_reward += episode_reward
-            total_length += len(states)
-            
-            # Update context estimate for next episode
-            context = new_context
+        # Collect single episode
+        states_ep, actions_ep, rewards_ep, log_probs_ep, dones_ep, values_ep, episode_reward, new_context, trajectory = self.collect_episode(context)
         
+        # Compute returns for this episode
+        returns_ep = self.compute_returns(rewards_ep, dones_ep, values_ep)
+        
+        # Store episode data
+        states = [states_ep]
+        actions = [actions_ep]
+        log_probs = [log_probs_ep]
+        returns = [returns_ep.tolist()]
+        contexts = [new_context]
+        trajectories = [trajectory]
+        
+        # Update policy after single episode
         actor_loss, critic_loss, context_loss = self.update_policy(
-            all_states, all_actions, all_log_probs, all_returns,
-            all_contexts, all_trajectories
+            states, actions, log_probs, returns,
+            contexts, trajectories
         )
         
-        avg_reward = total_reward / num_episodes_per_update
-        avg_length = total_length / num_episodes_per_update
-        
-        return avg_reward, avg_length, actor_loss, critic_loss, context_loss
+        return episode_reward, len(states_ep), actor_loss, critic_loss, context_loss
     
     def evaluate(self, num_episodes=10):
         if self.rank != 0:  # Only evaluate on rank 0
             return 0.0
             
         eval_rewards = []
-        wind_prediction_losses = []
+        wind_prediction_errors = []
+        target_errors = []
         context = None  # Initial context estimate
         
         for episode in range(num_episodes):
-            # sample new wind power every episode
-            self.env.sample_disturbances()
-                
-            episode_reward = 0
+            # Environment will sample new wind power and target position on reset
+            state = self.env.reset()[0]
+            actual_wind = self.env.wind_power
+            actual_target = self.env.target_x
             
-            # Get actual wind power from environment
-            actual_disturbance = self.env.get_current_disturbance()
-            actual_wind = actual_disturbance['wind_power']
-            print(f"\nEpisode {episode + 1}")
+            print(f"\nEvaluation Episode {episode + 1}")
             print(f"  Actual wind power: {actual_wind:.3f}")
+            print(f"  Actual target position: {actual_target:.3f}")
             
             # Pre-allocate trajectory array for max steps
             max_steps = 1000
             trajectory = np.zeros((max_steps, self.state_dim + self.action_dim + 1), dtype=np.float32)
             episode_length = 0
             done = False
-            state = self.env.reset(options={'sample_new_wind': False})[0]
+            episode_reward = 0
             
             for step in range(max_steps):
                 # Get action using current context estimate
@@ -463,28 +453,25 @@ class ContextAwarePPO:
                         context, _, _, wind_pred = self.context_encoder(traj_tensor)
                         context = context.squeeze(0)
                         
-                        # # Print predicted wind power every 100 steps
-                        # if step % 100 == 0:
-                        #     # Scale prediction to match actual range [0, 15]
-                        #     pred_wind = wind_pred.item() * 7.5 + 7.5
-                        #     print(f"  Step {step:4d} Predicted wind: {pred_wind:.3f}")
+                        # Print predictions every 100 steps
+                        if step % 100 == 0:
+                            print(f"  Step {step:4d} Predicted wind: {wind_pred.item():.3f}")
                 
                 if done or step == max_steps - 1:
-                    # Print final prediction
-                    pred_wind = wind_pred.item() * 7.5 + 7.5
-                    wind_loss = abs(pred_wind - actual_wind)
-                    print(f"  Final Predicted wind: {pred_wind:.3f}")
-                    print(f"  Wind Prediction Error: {wind_loss:.3f}")
+                    wind_error = abs(wind_pred.item() - actual_wind)
+                    print(f"  Final Predicted wind: {wind_pred.item():.3f}")
+                    print(f"  Wind Prediction Error: {wind_error:.3f}")
                     print(f"  Episode Length: {episode_length}, Reward: {episode_reward:.2f}")
+                    wind_prediction_errors.append(wind_error)
                     break
             
             eval_rewards.append(episode_reward)
-            wind_prediction_losses.append(wind_loss)
         
         mean_reward = np.mean(eval_rewards)
+        mean_wind_error = np.mean(wind_prediction_errors)
         print(f"\nEvaluation Summary:")
-        print(f"Reward over {num_episodes} episodes: {mean_reward:.2f} +- {np.std(eval_rewards):.2f}")
-        print(f"Wind Prediction Error: {np.mean(wind_prediction_losses):.3f} +- {np.std(wind_prediction_losses):.3f}")
+        print(f"Average Reward: {mean_reward:.2f} ± {np.std(eval_rewards):.2f}")
+        print(f"Average Wind Prediction Error: {mean_wind_error:.3f} ± {np.std(wind_prediction_errors):.3f}")
         return mean_reward
     
     def save_model(self, suffix=''):

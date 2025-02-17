@@ -270,7 +270,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         # ---------------------------------------------------------------------------------------
         # Target position for the lander to aim for (instead of always landing at (0,0)).
         # This is a custom extension to make the landing pad location flexible.
-        self.target_x = None
+        self.target_x = 0.5
         self.target_y = None
 
         # ---------------------------------------------------------------------------------------
@@ -406,7 +406,7 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         height = np.array(fixed_heights) * (H / 10) + H / 4
 
         self.helipad_y = H / 4
-        self.helipad_x = W / 2
+        self.helipad_x = W * self.target_x
 
         target_chunk_idx = np.argmin(np.abs(np.array(chunk_x) - self.helipad_x))
 

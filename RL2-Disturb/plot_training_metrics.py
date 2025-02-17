@@ -126,22 +126,30 @@ def plot_metrics(episodes, lengths, rewards, actor_losses, critic_losses, contex
             
         return ma
     
-    # Plot episode lengths
-    ax1.plot(episodes, lengths, 'b-', alpha=0.3)
-    ax1.set_xlabel('Episode')
-    ax1.set_ylabel('Average Episode Length')
-    ax1.set_title('Training Episode Lengths')
-    ax1.grid(True)
-    
-    # Plot moving average of episode lengths
     window = 50  # Window size
-    ma = calculate_moving_average(lengths, window)
-    ax1.plot(episodes, ma, 'b-', label=f'{window}-episode moving average')
-    ax1.legend()
+
+    # Plot evaluation rewards
+    if eval_rewards:
+        # Calculate eval episodes (every 50 episodes)
+        eval_episodes = np.arange(50, 50 * (len(eval_rewards) + 1), 50)
+        ax1.plot(eval_episodes, eval_rewards, 'r-', label='Per Evaluation', alpha=0.3)
+        
+        # For evaluation rewards, use a smaller window if needed
+        eval_window = min(window, len(eval_rewards))
+        if len(eval_rewards) > 1:  # Only calculate moving average if we have more than one point
+            ma = calculate_moving_average(eval_rewards, eval_window)
+            ax1.plot(eval_episodes, ma, 'r-', linewidth=2, label=f'{eval_window}-episode moving average')
+        ax1.set_xlabel('Episode')
+        ax1.set_ylabel('Evaluation Reward')
+        ax1.set_title('Evaluation Rewards')
+        ax1.grid(True)
+        ax1.legend()
+        
     
     # Plot training rewards
     ax2.plot(episodes, rewards, 'g-', alpha=0.3, label='Per Episode')
     ma = calculate_moving_average(rewards, window)
+    print(max(ma))
     ax2.plot(episodes, ma, 'g-', linewidth=2, label=f'{window}-episode moving average')
     ax2.set_xlabel('Episode')
     ax2.set_ylabel('Training Reward')
@@ -186,22 +194,18 @@ def plot_metrics(episodes, lengths, rewards, actor_losses, critic_losses, contex
         ax5.plot(episodes, ma, 'y-', label=f'{window}-episode moving average')
         ax5.legend()
     
-    # Plot evaluation rewards
-    if eval_rewards:
-        # Calculate eval episodes (every 50 episodes)
-        eval_episodes = np.arange(50, 50 * (len(eval_rewards) + 1), 50)
-        ax6.plot(eval_episodes, eval_rewards, 'r-', label='Per Evaluation', alpha=0.3)
-        
-        # For evaluation rewards, use a smaller window if needed
-        eval_window = min(window, len(eval_rewards))
-        if len(eval_rewards) > 1:  # Only calculate moving average if we have more than one point
-            ma = calculate_moving_average(eval_rewards, eval_window)
-            ax6.plot(eval_episodes, ma, 'r-', linewidth=2, label=f'{eval_window}-episode moving average')
-        ax6.set_xlabel('Episode')
-        ax6.set_ylabel('Evaluation Reward')
-        ax6.set_title('Evaluation Rewards')
-        ax6.grid(True)
-        ax6.legend()
+    # Plot episode lengths
+    ax6.plot(episodes, lengths, 'b-', alpha=0.3)
+    ax6.set_xlabel('Episode')
+    ax6.set_ylabel('Average Episode Length')
+    ax6.set_title('Training Episode Lengths')
+    ax6.grid(True)
+    
+    # Plot moving average of episode lengths
+    ma = calculate_moving_average(lengths, window)
+    ax6.plot(episodes, ma, 'b-', label=f'{window}-episode moving average')
+    ax6.legend()
+    
     
     plt.tight_layout()
     

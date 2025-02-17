@@ -349,24 +349,60 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
 
         W = VIEWPORT_W / SCALE
         H = VIEWPORT_H / SCALE
+        
+        # # Create Terrain
+        # CHUNKS = 11
+        # np.random.seed(42)  # Ensure reproducibility
+        # fixed_heights = [3, 5, 4, 6, 4, 5, 4, 6, 4, 5, 3]  # Predefined terrain heights
+        # height = np.array(fixed_heights) * (H / 10)  # Scale heights to match the environment
 
+        # chunk_x = [W / (CHUNKS - 1) * i for i in range(CHUNKS)]
+
+        # # Dynamic Helipad Positioning
+        # helipad_index = np.argmin(np.abs(np.array(chunk_x) - self.target_x))  # Closest chunk to target_x
+        # self.helipad
+        # self.helipad_x1 = chunk_x[max(0, helipad_index - 1)]
+        # self.helipad_x2 = chunk_x[min(CHUNKS - 1, helipad_index)]
+        # self.helipad_y = self.target_y
+
+        # # Ensure a flat region for the helipad
+        # for i in range(max(0, helipad_index - 2), min(CHUNKS, helipad_index + 2)):
+        #     height[i] = self.target_y
+        
         # Create Terrain
-        CHUNKS = 11
+        CHUNKS = 11 
         np.random.seed(42)  # Ensure reproducibility
-        fixed_heights = [3, 5, 4, 6, 4, 5, 4, 6, 4, 5, 3]  # Predefined terrain heights
-        height = np.array(fixed_heights) * (H / 10)  # Scale heights to match the environment
+        chunk_x = [W / (CHUNKS - 1) * i for i in range(CHUNKS)] # chunk x-positions (0, 2, 4, 8, ..., 20)
 
-        chunk_x = [W / (CHUNKS - 1) * i for i in range(CHUNKS)]
 
-        # Dynamic Helipad Positioning
-        helipad_index = np.argmin(np.abs(np.array(chunk_x) - self.target_x))  # Closest chunk to target_x
-        self.helipad_x1 = chunk_x[max(0, helipad_index - 1)]
-        self.helipad_x2 = chunk_x[min(CHUNKS - 1, helipad_index)]
-        self.helipad_y = self.target_y
+        fixed_heights = [1, 1.5, 2, 2, 2.5, 2.0, 2.0, 2.0, 2.5, 1.0, 1.5]
 
-        # Ensure a flat region for the helipad
-        for i in range(max(0, helipad_index - 2), min(CHUNKS, helipad_index + 2)):
-            height[i] = self.target_y
+        height = np.array(fixed_heights) * (H / 10) + H / 4
+
+        self.helipad_y = H / 4
+        self.helipad_x = W * self.target_x
+
+        target_chunk_idx = np.argmin(np.abs(np.array(chunk_x) - self.helipad_x))
+
+        if target_chunk_idx == CHUNKS-1:
+            target_chunk_idx -= 2       # -3 because later we add 2 
+        elif target_chunk_idx == CHUNKS-2:
+            target_chunk_idx -= 1       # -2 because later we add 2 
+        elif target_chunk_idx == 0:
+            target_chunk_idx += 2
+        
+
+        self.helipad_x1 = chunk_x[target_chunk_idx - 1]
+        self.helipad_x2 = chunk_x[target_chunk_idx + 1]
+        self.helipad_x = chunk_x[target_chunk_idx]
+
+        height[target_chunk_idx - 2] = self.helipad_y
+        height[target_chunk_idx - 1] = self.helipad_y
+        height[target_chunk_idx + 0] = self.helipad_y
+        height[target_chunk_idx + 1] = self.helipad_y
+        height[target_chunk_idx + 2] = self.helipad_y
+        
+       
 
         # Smooth the terrain
         smooth_y = [
@@ -490,100 +526,76 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             self.world.DestroyBody(self.particles.pop(0))
 
     def step(self, action):
-        assert self.lander is not None
+        """Apply the chosen action to the environment, update physics, and compute the reward."""
 
-        # Update wind and apply to the lander
-        assert self.lander is not None, "You forgot to call reset()"
-        if self.enable_wind and not (
-            self.legs[0].ground_contact or self.legs[1].ground_contact
-        ):
-            # the function used for wind is tanh(sin(2 k x) + sin(pi k x)),
-            # which is proven to never be periodic, k = 0.01
+        assert self.lander is not None, "You forgot to call reset() before step()."
+
+        #----------------------------
+        # 1) Wind & Torque (Optional)
+        #----------------------------
+        if self.enable_wind and not (self.legs[0].ground_contact or self.legs[1].ground_contact):
+            # wind_mag uses tanh(sin() + sin()), scaled by self.wind_power
             wind_mag = (
                 math.tanh(
                     math.sin(0.02 * self.wind_idx)
-                    + (math.sin(math.pi * 0.01 * self.wind_idx))
-                )
-                * self.wind_power
+                    + math.sin(math.pi * 0.01 * self.wind_idx)
+                ) * self.wind_power
             )
             self.wind_idx += 1
-            self.lander.ApplyForceToCenter(
-                (wind_mag, 0.0),
-                True,
-            )
 
-            # the function used for torque is tanh(sin(2 k x) + sin(pi k x)),
-            # which is proven to never be periodic, k = 0.01
+            # apply wind as a horizontal force
+            self.lander.ApplyForceToCenter((wind_mag, 0.0), True)
+
+            # torque_mag uses tanh(sin() + sin()), scaled by self.turbulence_power
             torque_mag = (
                 math.tanh(
                     math.sin(0.02 * self.torque_idx)
-                    + (math.sin(math.pi * 0.01 * self.torque_idx))
-                )
-                * self.turbulence_power
+                    + math.sin(math.pi * 0.01 * self.torque_idx)
+                ) * self.turbulence_power
             )
             self.torque_idx += 1
-            self.lander.ApplyTorque(
-                torque_mag,
-                True,
-            )
 
+            # apply torque
+            self.lander.ApplyTorque(torque_mag, True)
+
+        #----------------------------
+        # 2) Process Action
+        #----------------------------
         if self.continuous:
+            # Clip continuous actions to [-1..+1]
             action = np.clip(action, -1, +1).astype(np.float64)
         else:
-            assert self.action_space.contains(
-                action
-            ), f"{action!r} ({type(action)}) invalid "
+            # Discrete action must be in {0,1,2,3}
+            assert self.action_space.contains(action), f"Invalid action {action!r}"
 
-        # Apply Engine Impulses
+        tip = (math.sin(self.lander.angle), math.cos(self.lander.angle))  # (sin θ, cos θ)
+        side = (-tip[1], tip[0])  # rotated by 90°
 
-        # Tip is the (X and Y) components of the rotation of the lander.
-        tip = (math.sin(self.lander.angle), math.cos(self.lander.angle))
-
-        # Side is the (-Y and X) components of the rotation of the lander.
-        side = (-tip[1], tip[0])
-
-        # Generate two random numbers between -1/SCALE and 1/SCALE.
         dispersion = [self.np_random.uniform(-1.0, +1.0) / SCALE for _ in range(2)]
 
         m_power = 0.0
-        if (self.continuous and action[0] > 0.0) or (
-            not self.continuous and action == 2
-        ):
-            # Main engine
+        # main engine: continuous: action[0] > 0.0, discrete: action == 2
+        if (self.continuous and action[0] > 0.0) or (not self.continuous and action == 2):
             if self.continuous:
-                m_power = (np.clip(action[0], 0.0, 1.0) + 1.0) * 0.5  # 0.5..1.0
-                assert m_power >= 0.5 and m_power <= 1.0
+                # 0.5..1.0 thrust
+                m_power = (np.clip(action[0], 0.0, 1.0) + 1.0) * 0.5
+                assert 0.5 <= m_power <= 1.0
             else:
                 m_power = 1.0
 
-            # 4 is move a bit downwards, +-2 for randomness
-            # The components of the impulse to be applied by the main engine.
-            ox = (
-                tip[0] * (MAIN_ENGINE_Y_LOCATION / SCALE + 2 * dispersion[0])
-                + side[0] * dispersion[1]
-            )
-            oy = (
-                -tip[1] * (MAIN_ENGINE_Y_LOCATION / SCALE + 2 * dispersion[0])
-                - side[1] * dispersion[1]
-            )
-
+            # main engine impulse offset
+            ox = tip[0] * ((MAIN_ENGINE_Y_LOCATION / SCALE) + 2 * dispersion[0]) + side[0] * dispersion[1]
+            oy = -tip[1] * ((MAIN_ENGINE_Y_LOCATION / SCALE) + 2 * dispersion[0]) - side[1] * dispersion[1]
             impulse_pos = (self.lander.position[0] + ox, self.lander.position[1] + oy)
+
             if self.render_mode is not None:
-                # particles are just a decoration, with no impact on the physics, so don't add them when not rendering
-                p = self._create_particle(
-                    3.5,  # 3.5 is here to make particle speed adequate
-                    impulse_pos[0],
-                    impulse_pos[1],
-                    m_power,
-                )
-                p.ApplyLinearImpulse(
-                    (
-                        ox * MAIN_ENGINE_POWER * m_power,
-                        oy * MAIN_ENGINE_POWER * m_power,
-                    ),
-                    impulse_pos,
-                    True,
-                )
+                # Spawn a particle purely for visual effect
+                p = self._create_particle(3.5, impulse_pos[0], impulse_pos[1], m_power)
+                p.ApplyLinearImpulse((ox * MAIN_ENGINE_POWER * m_power,
+                                    oy * MAIN_ENGINE_POWER * m_power),
+                                    impulse_pos, True)
+
+            # Apply main engine impulse to the lander
             self.lander.ApplyLinearImpulse(
                 (-ox * MAIN_ENGINE_POWER * m_power, -oy * MAIN_ENGINE_POWER * m_power),
                 impulse_pos,
@@ -591,43 +603,30 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
             )
 
         s_power = 0.0
-        if (self.continuous and np.abs(action[1]) > 0.5) or (
-            not self.continuous and action in [1, 3]
-        ):
-            # Orientation/Side engines
+        # side engine: continuous: abs(action[1]) > 0.5, discrete: action==1(left) or 3(right)
+        if (self.continuous and np.abs(action[1]) > 0.5) or (not self.continuous and action in [1, 3]):
             if self.continuous:
                 direction = np.sign(action[1])
                 s_power = np.clip(np.abs(action[1]), 0.5, 1.0)
-                assert s_power >= 0.5 and s_power <= 1.0
+                assert 0.5 <= s_power <= 1.0
             else:
-                # action = 1 is left, action = 3 is right
+                # action=1 => left, action=3 => right
                 direction = action - 2
                 s_power = 1.0
 
-            # The components of the impulse to be applied by the side engines.
-            ox = tip[0] * dispersion[0] + side[0] * (
-                3 * dispersion[1] + direction * SIDE_ENGINE_AWAY / SCALE
-            )
-            oy = -tip[1] * dispersion[0] - side[1] * (
-                3 * dispersion[1] + direction * SIDE_ENGINE_AWAY / SCALE
-            )
+            ox = tip[0] * dispersion[0] + side[0] * (3 * dispersion[1] + direction * SIDE_ENGINE_AWAY / SCALE)
+            oy = -tip[1] * dispersion[0] - side[1] * (3 * dispersion[1] + direction * SIDE_ENGINE_AWAY / SCALE)
 
-            # The constant 17 is a constant, that is presumably meant to be SIDE_ENGINE_HEIGHT.
-            # However, SIDE_ENGINE_HEIGHT is defined as 14
-            # This causes the position of the thrust on the body of the lander to change, depending on the orientation of the lander.
-            # This in turn results in an orientation dependent torque being applied to the lander.
+            # Position for side engine impulse
+            # 17 is historically used instead of SIDE_ENGINE_HEIGHT=14 => slight mismatch
             impulse_pos = (
                 self.lander.position[0] + ox - tip[0] * 17 / SCALE,
                 self.lander.position[1] + oy + tip[1] * SIDE_ENGINE_HEIGHT / SCALE,
             )
             if self.render_mode is not None:
-                # particles are just a decoration, with no impact on the physics, so don't add them when not rendering
                 p = self._create_particle(0.7, impulse_pos[0], impulse_pos[1], s_power)
                 p.ApplyLinearImpulse(
-                    (
-                        ox * SIDE_ENGINE_POWER * s_power,
-                        oy * SIDE_ENGINE_POWER * s_power,
-                    ),
+                    (ox * SIDE_ENGINE_POWER * s_power, oy * SIDE_ENGINE_POWER * s_power),
                     impulse_pos,
                     True,
                 )
@@ -637,14 +636,22 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
                 True,
             )
 
+        #----------------------------
+        # 3) Advance Physics
+        #----------------------------
         self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
 
+        #----------------------------
+        # 4) Compute State & Reward
+        #----------------------------
         pos = self.lander.position
         vel = self.lander.linearVelocity
 
+        # Distance and velocity normalized to ~[-1..+1]
+        # Assumes self.target_x and self.helipad_y are in world coords
         state = [
-            (pos.x - VIEWPORT_W / SCALE / 2) / (VIEWPORT_W / SCALE / 2),
-            (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2),
+            (pos.x - self.helipad_x) / (VIEWPORT_W / SCALE / 2),         # normalized X distance
+            (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2),  # normalized Y distance
             vel.x * (VIEWPORT_W / SCALE / 2) / FPS,
             vel.y * (VIEWPORT_H / SCALE / 2) / FPS,
             self.lander.angle,
@@ -654,36 +661,43 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         ]
         assert len(state) == 8
 
-        reward = 0
+        # Shaping reward
         shaping = (
-            -100 * np.sqrt((state[0] - self.target_x)**2 + (state[1]-self.target_y)**2)
-            - 100 * np.sqrt(state[2] * state[2] + state[3] * state[3])
-            - 100 * abs(state[4])
-            + 10 * state[6]
-            + 10 * state[7]
-        )  # And ten points for legs contact, the idea is if you
-        # lose contact again after landing, you get negative reward
+            -100 * np.sqrt(state[0]**2 + state[1]**2)     # penalty for distance to target
+            - 100 * np.sqrt(state[2]**2 + state[3]**2)    # penalty for horizontal/vertical velocity
+            - 100 * abs(state[4])                        # penalty for angle
+            + 10 * state[6]                              # bonus if left leg on ground
+            + 10 * state[7]                              # bonus if right leg on ground
+        )
+
+        reward = 0.0
         if self.prev_shaping is not None:
+            # difference-based reward (potential shaping)
             reward = shaping - self.prev_shaping
         self.prev_shaping = shaping
 
-        reward -= (
-            m_power * 0.30
-        )  # less fuel spent is better, about -30 for heuristic landing
-        reward -= s_power * 0.03
+        # Fuel penalties
+        reward -= m_power * 0.30  # main engine fuel cost
+        reward -= s_power * 0.03  # side engine fuel cost
 
         terminated = False
+        # If game_over or we stray too far in X, big negative reward
         if self.game_over or abs(state[0]) >= 1.0:
             terminated = True
-            reward = -100
+            reward = -100.0
+
+        # If lander stops moving (self.lander.awake==False), it's a successful landing
         if not self.lander.awake:
             terminated = True
-            reward = +100
+            reward = +100.0
 
+        # Optional rendering
         if self.render_mode == "human":
             self.render()
-        # truncation=False as the time limit is handled by the `TimeLimit` wrapper added during `make`
+
+        # No truncation here; TimeLimit wrapper outside handles that
         return np.array(state, dtype=np.float32), reward, terminated, False, {}
+
 
     def render(self):
         if self.render_mode is None:

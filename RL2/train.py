@@ -60,10 +60,10 @@ def create_argparser():
 
     ### Training
     parser.add_argument("--max_pol_iters", type=int, default=5000) # like vanilla lander
-    parser.add_argument("--timesteps_per_pol_update", type=int, default=3_906,
+    parser.add_argument("--timesteps_per_pol_update", type=int, default=2048,
                         help="If -1, quantity is determined using a formula")
     parser.add_argument("--timesteps_per_learner_batch", type=int, default=64) #  vanilla PPO = 64 timesteps
-    parser.add_argument("--meta_ep_per_learner_batch", type=int, default=5) #  vanilla PPO = 64 timesteps
+    parser.add_argument("--meta_ep_per_learner_batch", type=int, default=10) #  vanilla PPO = 64 timesteps
     parser.add_argument("--ppo_opt_epochs", type=int, default=10)
     
     parser.add_argument("--ppo_clip_param", type=float, default=0.1118520486242931) # like vanilla lander
@@ -201,6 +201,12 @@ def main():
         filemode='a')                 # 'w' for writing (overwrites existing file), 'a' for appending
     print('start logging')
     logging.info("start logging")
+    
+    # Log all arguments
+    logging.info("Command line arguments:")
+    for arg, value in vars(args).items():
+        logging.info(f"{arg}: {value}")
+    logging.info("")
 
     # create env.
     env = create_env(

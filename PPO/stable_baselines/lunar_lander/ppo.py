@@ -10,7 +10,7 @@ import gymnasium as gym
 from gymnasium.envs.registration import register
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import ProgressBarCallback, BaseCallback
-from stable_baselines3.common.monitor import Monitor
+from monitor import Monitor
 from stable_baselines3.common.results_plotter import load_results, ts2xy
 
 from lib.VarPosLander import LunarLanderTargetPos
@@ -32,7 +32,7 @@ register(
 def train(env_id, total_timesteps, log_rewards, model_dir, log_dir):
     """Train the PPO agent on the specified environment."""
     # create environment
-    env = gym.make(env_id, render_mode=None, target_x=5, target_y=5)
+    env = gym.make(env_id, render_mode="human", target_x=0.3, target_y=0.5)
     
     # reward logging
     timepoint = datetime.now().strftime("%Y%m%d_%H%M%S")     # Append date and time to the model save path and reward log
@@ -44,7 +44,7 @@ def train(env_id, total_timesteps, log_rewards, model_dir, log_dir):
         # if you want the reward plot, add --log_rewards as argument when you call file
         env = Monitor(env, filename=log_dir)
         # Create the callback: check every 1000 steps
-        callback = SaveOnBestTrainingRewardCallback(check_freq=1000, log_dir=log_dir)
+        callback = SaveOnBestTrainingRewardCallback(check_freq=10_000, log_dir=log_dir)
         
     # create rl model
     model = PPO("MlpPolicy", env, verbose=1)
@@ -65,12 +65,12 @@ def train(env_id, total_timesteps, log_rewards, model_dir, log_dir):
     env.close()
 
 
-def evaluate(env_id, model_path, render_mode, log_reward):
+def evaluate(env_id, model_path, render_mode):
     """Evaluate a trained PPO agent in the specified environment."""
     if render_mode == "browser" and render_browser is None:
         raise ImportError("render_browser is not installed or available.")
 
-    env_kwargs = {"target_x": 5, "target_y": 5}
+    env_kwargs = {"target_x": 0.3, "target_y": 0.5}
     env_kwargs["render_mode"] = render_mode
     
     # Ensure the latest model is loaded if model_path is default
@@ -112,7 +112,7 @@ def evaluate(env_id, model_path, render_mode, log_reward):
     plt.grid()
 
     # Save the figure to a PNG file
-    print(os.listdir("models"))
+    # print(os.listdir("models"))
     model_name = "model_20241216_150858"
     plot_path = f"reward_log/eval/curve_{model_name}"
     os.makedirs("reward_log/eval", exist_ok=True)
@@ -165,7 +165,7 @@ def main():
     parser.add_argument("--env_id", type=str, default="LunarLanderTargetPos", help="Gym environment ID.")
     parser.add_argument("--model_path", type=str, default="models", help="Path to save or load the model.")
     parser.add_argument("--log_path", type=str, default="reward_log", help="Path to save and plot the reward values.")
-    parser.add_argument("--total_timesteps", type=int, default=100_000, help="Total timesteps for training.")
+    parser.add_argument("--total_timesteps", type=int, default=1_000_000, help="Total timesteps for training.")
     parser.add_argument("--log_rewards", action="store_true", help="Log and plot rewards during evaluation.")
 
     args = parser.parse_args()

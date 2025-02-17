@@ -766,14 +766,17 @@ class LunarLanderTargetPos(gym.Env, EzPickle):
         # EPISODE TERMINATION CONDITIONS
         terminated = False
         # if self.game_over or pos.x >W or pos.x<0 or pos.y>H:
-        if self.game_over or pos.x >W or pos.x<0:
+        if self.game_over or pos.x >W or pos.x<0 or pos.y>H:
             terminated = True
             reward = -100
         
         # If lander stops moving (self.lander.awake==False), it's a successful landing        
         if not self.lander.awake:
             terminated = True
-            reward = +100
+            if pos.x >= self.helipad_x1 and pos.x <= self.helipad_x2:
+                reward = +100
+            else:
+                reward = 0
 
         # NOTE: Gymnasium's TimeLimit wrapper handles max episode steps => 'False' for truncation here.
         if self.render_mode == "human":

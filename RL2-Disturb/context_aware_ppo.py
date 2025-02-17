@@ -112,9 +112,9 @@ class ContextAwarePPO:
         self.env_name = env_name
         self.render_mode = render_mode
         
-        # Initialize networks
+        # Initialize networks with better architectures
         self.context_encoder = ContextEncoder(
-            input_dim=self.state_dim + self.action_dim + 1,  # state + action + reward
+            input_dim=self.state_dim + self.action_dim + 1,
             hidden_dim=hidden_dim,
             context_dim=context_dim
         )
@@ -126,19 +126,39 @@ class ContextAwarePPO:
             action_dim=self.action_dim
         )
         
-        # Combine parameters for single optimizer
-        self.optimizer = torch.optim.Adam(
-            list(self.context_encoder.parameters()) + 
-            list(self.policy.parameters()),
+        # Separate optimizers for policy and context encoder
+        self.policy_optimizer = torch.optim.Adam(
+            self.policy.parameters(),
             lr=lr
         )
+        self.context_optimizer = torch.optim.Adam(
+            self.context_encoder.parameters(),
+            lr=lr * 0.5  # Slower learning rate for context encoder
+        )
         
-        # Training parameters
+        # Learning rate schedulers
+        self.policy_scheduler = torch.optim.lr_scheduler.StepLR(
+            self.policy_optimizer, 
+            step_size=1000,  # Adjust every 1000 episodes
+            gamma=0.95  # Reduce learning rate by 5%
+        )
+        self.context_scheduler = torch.optim.lr_scheduler.StepLR(
+            self.context_optimizer,
+            step_size=1000,
+            gamma=0.95
+        )
+        
+        # Adaptive context KL weight
+        self.context_kl_weight = context_kl_weight
+        self.min_kl_weight = 0.01
+        self.max_kl_weight = 0.5
+        self.target_kl = 0.02
+        
+        # Training parameters with curriculum
         self.gamma = gamma
         self.epsilon = epsilon
         self.epochs = epochs
         self.batch_size = batch_size
-        self.context_kl_weight = context_kl_weight
         
         # Initialize training state
         self.total_episodes = 0
@@ -147,6 +167,29 @@ class ContextAwarePPO:
         self.best_eval_reward = float('-inf')
         self.checkpoint_files = []
         
+        # Curriculum learning parameters
+        self.wind_range = (0.0, 5.0)  # Start with smaller wind range
+        self.target_range = (0.4, 0.6)  # Start with smaller target range
+        self.curriculum_step = 0
+        
+    def update_curriculum(self):
+        """Update curriculum based on performance"""
+        if len(self.eval_rewards) > 0 and len(self.training_rewards) > 100:
+            avg_reward = np.mean(self.training_rewards[-100:])
+            if avg_reward > -200:  # If performance is good enough
+                self.curriculum_step += 1
+                if self.curriculum_step == 1:
+                    self.wind_range = (0.0, 10.0)  # Increase wind range
+                    self.target_range = (0.3, 0.7)  # Increase target range
+                elif self.curriculum_step == 2:
+                    self.wind_range = (0.0, 15.0)  # Full wind range
+                    self.target_range = (0.2, 0.8)  # Full target range
+                
+                if self.rank == 0:
+                    print(f"\nUpdating curriculum - Step {self.curriculum_step}")
+                    print(f"New wind range: {self.wind_range}")
+                    print(f"New target range: {self.target_range}")
+    
     def get_action(self, state, context):
         state = torch.FloatTensor(state).unsqueeze(0)
         context = context.unsqueeze(0) if context is not None else torch.zeros(1, self.context_dim)
@@ -293,7 +336,13 @@ class ContextAwarePPO:
                     dim=-1
                 ).mean()
                 
-                # Process states/actions/returns
+                # Context update first
+                context_loss = self.context_kl_weight * kl_loss
+                self.context_optimizer.zero_grad()
+                context_loss.backward(retain_graph=True)
+                self.context_optimizer.step()
+                
+                # Process states/actions/returns with detached context
                 max_len = max(episodes_states[idx].size(0) for idx in batch_indices)
                 
                 batch_states = torch.zeros(max_len, actual_batch_size, self.state_dim)
@@ -310,8 +359,9 @@ class ContextAwarePPO:
                     batch_returns[:episode_len, batch_idx] = episodes_returns[episode_idx]
                     batch_masks[:episode_len, batch_idx] = 1
                 
-                # Expand context for each timestep
-                expanded_contexts = contexts.unsqueeze(0).expand(max_len, -1, -1)
+                # Create a detached copy of contexts for policy update
+                contexts_for_policy = contexts.detach().clone()
+                expanded_contexts = contexts_for_policy.unsqueeze(0).expand(max_len, -1, -1)
                 
                 # Get policy predictions
                 action_logits, values = self.policy(batch_states, expanded_contexts)
@@ -330,28 +380,21 @@ class ContextAwarePPO:
                 actor_loss = actor_loss.sum() / batch_masks.sum()
                 critic_loss = critic_loss.sum() / batch_masks.sum()
                 
-                # Total loss
-                loss = actor_loss + 0.5 * critic_loss + self.context_kl_weight * kl_loss
+                # Policy update with detached context
+                policy_loss = actor_loss + 0.5 * critic_loss
+                self.policy_optimizer.zero_grad()
+                policy_loss.backward()
+                self.policy_optimizer.step()
                 
-                self.optimizer.zero_grad()
-                loss.backward()
+                # Adjust KL weight based on KL divergence
+                if kl_loss < self.target_kl:
+                    self.context_kl_weight = max(self.min_kl_weight, self.context_kl_weight * 0.95)
+                else:
+                    self.context_kl_weight = min(self.max_kl_weight, self.context_kl_weight * 1.05)
                 
-                # Synchronize gradients across workers
-                for param in self.context_encoder.parameters():
-                    if param.grad is not None:
-                        grad_numpy = param.grad.data.numpy()
-                        buf = np.zeros_like(grad_numpy)
-                        MPI.COMM_WORLD.Allreduce([grad_numpy, MPI.FLOAT], [buf, MPI.FLOAT], op=MPI.SUM)
-                        param.grad.data = torch.from_numpy(buf / self.size)
-                
-                for param in self.policy.parameters():
-                    if param.grad is not None:
-                        grad_numpy = param.grad.data.numpy()
-                        buf = np.zeros_like(grad_numpy)
-                        MPI.COMM_WORLD.Allreduce([grad_numpy, MPI.FLOAT], [buf, MPI.FLOAT], op=MPI.SUM)
-                        param.grad.data = torch.from_numpy(buf / self.size)
-                
-                self.optimizer.step()
+                # Update learning rates
+                self.policy_scheduler.step()
+                self.context_scheduler.step()
                 
                 total_actor_loss += actor_loss.item()
                 total_critic_loss += critic_loss.item()
@@ -366,6 +409,9 @@ class ContextAwarePPO:
         return avg_actor_loss, avg_critic_loss, avg_context_loss
     
     def train_episode(self, num_episodes_per_update=1):
+        # Update curriculum before episode
+        self.update_curriculum()
+        
         # Single episode collection
         states = []
         actions = []
@@ -485,7 +531,7 @@ class ContextAwarePPO:
         torch.save({
             'context_encoder_state_dict': self.context_encoder.state_dict(),
             'policy_state_dict': self.policy.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
+            'optimizer_state_dict': self.policy_optimizer.state_dict(),
             'total_episodes': self.total_episodes,
             'training_rewards': self.training_rewards,
             'eval_rewards': self.eval_rewards,
@@ -514,7 +560,7 @@ class ContextAwarePPO:
         
         instance.context_encoder.load_state_dict(checkpoint['context_encoder_state_dict'])
         instance.policy.load_state_dict(checkpoint['policy_state_dict'])
-        instance.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        instance.policy_optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         
         instance.total_episodes = checkpoint.get('total_episodes', 0)
         instance.training_rewards = checkpoint.get('training_rewards', [])

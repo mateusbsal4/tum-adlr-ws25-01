@@ -9,22 +9,32 @@ import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 import datetime
 from gymnasium import Wrapper
+import argparse
 
-# Get run name and set up directories
-RUN_NAME = input("Enter the run name: ")
-base_log_dir = os.path.join("logs", RUN_NAME)
-os.makedirs(base_log_dir, exist_ok=True)
+def parse_args():
+    parser = argparse.ArgumentParser(description='Train or evaluate a LunarLander agent with variable wind')
+    parser.add_argument('mode', choices=['train', 'eval'], help='Mode to run the script in')
+    parser.add_argument('--run-name', type=str, required=True, help='Name of the training/evaluation run')
+    parser.add_argument('--timesteps', type=int, default=5_000_000, help='Total timesteps for training')
+    parser.add_argument('--eval-episodes', type=int, default=10, help='Number of episodes for evaluation')
+    parser.add_argument('--render', action='store_true',
+                        help='Whether to render the environment during training/evaluation')
+    return parser.parse_args()
 
-# Set up logging
-log_filename = os.path.join(base_log_dir, 'train_log.txt')
-logging.basicConfig(
-    filename=log_filename,
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filemode='w'
-)
-print('Starting training session:', RUN_NAME)
-logging.info(f"Starting training session: {RUN_NAME}")
+def setup_logging(run_name: str):
+    """Set up logging directory and configuration."""
+    base_log_dir = os.path.join("logs", run_name)
+    os.makedirs(base_log_dir, exist_ok=True)
+
+    log_filename = os.path.join(base_log_dir, 'train_log.txt')
+    logging.basicConfig(
+        filename=log_filename,
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        filemode='w'
+    )
+    print('Starting session:', run_name)
+    logging.info(f"Starting session: {run_name}")
 
 class MetricsCallback(BaseCallback):
     def __init__(self, run_name, verbose=0):
@@ -150,27 +160,57 @@ def train_model(env, run_name, total_timesteps):
 
 def evaluate_model(model, env, run_name, num_episodes=10):
     """Evaluate the trained model and log results."""
-    mean_reward, std_reward = evaluate_policy(
-        model, 
-        env, 
-        n_eval_episodes=num_episodes, 
-        return_episode_rewards=True
-    )
+    episode_rewards = []
+    episode_winds = []
     
-    # Log evaluation results
-    logging.info("Final Evaluation Results:")
-    logging.info(f"Mean evaluation reward: {mean_reward:.2f}")
-    logging.info(f"Std evaluation reward: {std_reward:.2f}")
+    for episode in range(num_episodes):
+        obs, _ = env.reset()
+        done = False
+        episode_reward = 0
+        
+        # Get initial wind speed for this episode
+        current_wind = env.current_wind
+        episode_winds.append(current_wind)
+        print(f"Episode {episode + 1} - Wind Speed: {current_wind:.2f}")
+        logging.info(f"Episode {episode + 1} - Wind Speed: {current_wind:.2f}")
+        
+        while not done:
+            action, _ = model.predict(obs, deterministic=True)
+            obs, reward, done, _, _ = env.step(action)
+            episode_reward += reward
+            
+        episode_rewards.append(episode_reward)
+        print(f"Episode {episode + 1} - Total Reward: {episode_reward:.2f}")
+        logging.info(f"Episode {episode + 1} - Total Reward: {episode_reward:.2f}")
+    
+    mean_reward = np.mean(episode_rewards)
+    std_reward = np.std(episode_rewards)
+    mean_wind = np.mean(episode_winds)
+    std_wind = np.std(episode_winds)
+    
+    # Log summary results
+    logging.info("\nEvaluation Summary:")
+    logging.info(f"Mean evaluation reward: {mean_reward:.2f} ± {std_reward:.2f}")
+    logging.info(f"Mean wind speed: {mean_wind:.2f} ± {std_wind:.2f}")
+    print(f"\nEvaluation Summary:")
+    print(f"Mean reward: {mean_reward:.2f} ± {std_reward:.2f}")
+    print(f"Mean wind speed: {mean_wind:.2f} ± {std_wind:.2f}")
     
     # Save evaluation results
     eval_dir = os.path.join("logs", run_name, "evaluation_metrics")
     os.makedirs(eval_dir, exist_ok=True)
     np.save(
         os.path.join(eval_dir, "eval_results.npy"),
-        {"mean_reward": mean_reward, "std_reward": std_reward}
+        {
+            "mean_reward": mean_reward,
+            "std_reward": std_reward,
+            "episode_rewards": episode_rewards,
+            "episode_winds": episode_winds,
+            "mean_wind": mean_wind,
+            "std_wind": std_wind
+        }
     )
     
-    print(f"Final evaluation - Mean reward: {mean_reward:.2f} +/- {std_reward:.2f}")
     return mean_reward, std_reward
 
 def render_agent(model, env, run_name, num_episodes=10):
@@ -183,6 +223,11 @@ def render_agent(model, env, run_name, num_episodes=10):
         obs, _ = env.reset()
         done = False
         
+        # Get and log wind speed for this episode
+        current_wind = env.current_wind
+        print(f"\nRendering Episode {episode + 1} - Wind Speed: {current_wind:.2f}")
+        logging.info(f"Rendering Episode {episode + 1} - Wind Speed: {current_wind:.2f}")
+        
         while not done:
             action, _ = model.predict(obs, deterministic=True)
             obs, reward, done, _, _ = env.step(action)
@@ -192,7 +237,7 @@ def render_agent(model, env, run_name, num_episodes=10):
         # Plot episode rewards
         plt.figure(figsize=(10, 6))
         plt.plot(rewards, marker="o", linestyle="-", color="b")
-        plt.title(f"Episode {episode + 1} Rewards")
+        plt.title(f"Episode {episode + 1} Rewards (Wind: {current_wind:.2f})")
         plt.xlabel("Step")
         plt.ylabel("Reward")
         plt.grid(True)
@@ -202,29 +247,62 @@ def render_agent(model, env, run_name, num_episodes=10):
         plt.close()
         
         # Log episode statistics
-        logging.info(f"Evaluation episode {episode + 1}:")
-        logging.info(f"Total reward: {sum(rewards):.2f}")
+        total_reward = sum(rewards)
+        print(f"Episode {episode + 1} - Total Reward: {total_reward:.2f}")
+        logging.info(f"Episode {episode + 1} - Total Reward: {total_reward:.2f}")
         logging.info(f"Episode length: {len(rewards)}")
 
 def main():
-    # Create training environment
-    env = create_env()
+    args = parse_args()
+    setup_logging(args.run_name)
     
-    # Train the model
-    model = train_model(env, RUN_NAME, total_timesteps=5_000_000_000)
-    
-    # Create evaluation environment with rendering
-    eval_env = create_env(render_mode="rbg_array")
-    
-    # Evaluate the model
-    evaluate_model(model, eval_env, RUN_NAME)
-    
-    # Render agent's performance
-    render_agent(model, eval_env, RUN_NAME)
-    
-    # Clean up
-    env.close()
-    eval_env.close()
+    if args.render:
+        render_mode = "human"
+    else:
+        render_mode = "rgb_array"
+            
+    if args.mode == 'train':
+        # Create training environment
+        env = create_env()
+        
+        # Train the model
+        model = train_model(env, args.run_name, total_timesteps=args.timesteps)
+        
+        
+        # Create evaluation environment
+        eval_env = create_env(render_mode=render_mode)
+        
+        # Evaluate the model
+        evaluate_model(model, eval_env, args.run_name, num_episodes=args.eval_episodes)
+        
+        # Render agent's performance
+        render_agent(model, eval_env, args.run_name, num_episodes=args.eval_episodes)
+        
+        # Clean up
+        env.close()
+        eval_env.close()
+
+    else:  # eval mode
+        # Load the model
+        model_path = os.path.join("models", args.run_name, "final_model")
+        if not os.path.exists(model_path + ".zip"):
+            raise FileNotFoundError(f"No model found at {model_path}")
+        
+        # Create evaluation environment
+        eval_env = create_env(render_mode=render_mode)
+        
+        # Load and evaluate the model
+        model = PPO.load(model_path, env=eval_env)
+        logging.info(f"Loaded model from {model_path}")
+        
+        # Evaluate the model
+        evaluate_model(model, eval_env, args.run_name, num_episodes=args.eval_episodes)
+        
+        # Render agent's performance
+        render_agent(model, eval_env, args.run_name, num_episodes=args.eval_episodes)
+        
+        # Clean up
+        eval_env.close()
 
 if __name__ == "__main__":
     main()

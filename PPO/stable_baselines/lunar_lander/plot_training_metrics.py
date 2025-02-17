@@ -12,22 +12,34 @@ def load_training_metrics(run_dir: str) -> Dict:
         raise FileNotFoundError(f"No training metrics directory found at {metrics_dir}")
     
     metrics = {}
-    metric_files = {
+    required_files = {
         'rewards': 'rewards.npy',
         'ep_lengths': 'ep_lengths.npy',
         'critic_losses': 'critic_losses.npy',
+    }
+    
+    optional_files = {
         'wind_speeds': 'wind_speeds.npy'
     }
     
-    for key, filename in metric_files.items():
+    # Load required metrics
+    for key, filename in required_files.items():
         file_path = os.path.join(metrics_dir, filename)
         if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Missing metric file: {file_path}")
+            raise FileNotFoundError(f"Missing required metric file: {file_path}")
         metrics[key] = np.load(file_path, allow_pickle=True)
         
         # Convert None values to np.nan
         if metrics[key].dtype == object:
             metrics[key] = np.array([x if x is not None else np.nan for x in metrics[key]], dtype=float)
+    
+    # Load optional metrics
+    for key, filename in optional_files.items():
+        file_path = os.path.join(metrics_dir, filename)
+        if os.path.exists(file_path):
+            metrics[key] = np.load(file_path, allow_pickle=True)
+            if metrics[key].dtype == object:
+                metrics[key] = np.array([x if x is not None else np.nan for x in metrics[key]], dtype=float)
     
     # Generate steps based on the length of rewards array and n_steps
     n_steps = 2000  # This should match the n_steps in your training
@@ -54,9 +66,32 @@ def calculate_moving_average(data: List[float], window: int) -> np.ndarray:
         return np.array(data)
     return np.convolve(data, np.ones(window)/window, mode='valid')
 
+def calculate_episode_progress(metrics: Dict) -> Tuple[int, float]:
+    """Calculate the total episodes and average episode length."""
+    total_steps = metrics['steps'][-1]
+    avg_ep_length = np.mean(metrics['ep_lengths'])
+    estimated_episodes = int(total_steps / avg_ep_length)
+    return estimated_episodes, avg_ep_length
+
 def plot_training_curves(metrics: Dict, save_dir: str, window: int = 50):
     """Plot training metrics over time."""
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+    # Calculate and log episode progress
+    episodes, avg_length = calculate_episode_progress(metrics)
+    progress_text = (
+        f"Training Progress:\n"
+        f"Total Steps: {metrics['steps'][-1]:,}\n"
+        f"Estimated Episodes: {episodes:,}\n"
+        f"Average Episode Length: {avg_length:.1f}"
+    )
+    print(progress_text)
+    
+    # Determine number of plots needed
+    has_wind = 'wind_speeds' in metrics
+    n_plots = 4 if has_wind else 3
+    n_rows = (n_plots + 1) // 2
+    
+    fig, axes = plt.subplots(n_rows, 2, figsize=(15, 5*n_rows))
+    axes = axes.flatten()  # Flatten axes array for easier indexing
     steps = metrics['steps']
     
     def safe_plot(ax, data, color, title, ylabel):
@@ -81,11 +116,21 @@ def plot_training_curves(metrics: Dict, save_dir: str, window: int = 50):
         if len(data) > 0:
             ax.legend()
     
-    # Plot each metric
-    safe_plot(ax1, metrics['rewards'], 'g', 'Training Rewards', 'Reward')
-    safe_plot(ax2, metrics['ep_lengths'], 'b', 'Episode Lengths', 'Length')
-    safe_plot(ax3, metrics['critic_losses'], 'c', 'Critic Loss', 'Loss')
-    safe_plot(ax4, metrics['wind_speeds'], 'm', 'Wind Speeds', 'Wind Speed')
+    # Plot required metrics
+    safe_plot(axes[0], metrics['rewards'], 'g', 'Training Rewards', 'Reward')
+    safe_plot(axes[1], metrics['ep_lengths'], 'b', 'Episode Lengths', 'Length')
+    safe_plot(axes[2], metrics['critic_losses'], 'c', 'Critic Loss', 'Loss')
+    
+    # Plot wind speeds if available
+    if has_wind:
+        safe_plot(axes[3], metrics['wind_speeds'], 'm', 'Wind Speeds', 'Wind Speed')
+    
+    # Hide empty subplots if any
+    for i in range(n_plots, len(axes)):
+        axes[i].set_visible(False)
+    
+    # Add progress text to the figure
+    fig.text(0.02, 0.02, progress_text, fontsize=10, family='monospace')
     
     plt.tight_layout()
     plt.savefig(os.path.join(save_dir, 'training_curves.png'), dpi=300)

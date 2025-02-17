@@ -177,6 +177,32 @@ def plot_reward_distributions(metrics: Dict, eval_metrics: Dict, save_dir: str):
     plt.savefig(os.path.join(save_dir, 'reward_distributions.png'), dpi=300)
     plt.close()
 
+def plot_evaluation_scatter(metrics: Dict, save_dir: str):
+    """Plot wind speed vs reward scatter plot from evaluation results."""
+    if 'wind_reward_pairs' in metrics:
+        winds, rewards = zip(*metrics['wind_reward_pairs'])
+        
+        plt.figure(figsize=(10, 6))
+        plt.scatter(winds, rewards, alpha=0.6)
+        plt.plot(np.unique(winds), np.poly1d(np.polyfit(winds, rewards, 1))(np.unique(winds)), 
+                color='r', linestyle='--', label='Trend')
+        
+        plt.title('Wind Speed vs Reward')
+        plt.xlabel('Wind Speed')
+        plt.ylabel('Episode Reward')
+        plt.grid(True)
+        plt.legend()
+        
+        # Add correlation coefficient
+        correlation = np.corrcoef(winds, rewards)[0, 1]
+        plt.text(0.05, 0.95, f'Correlation: {correlation:.2f}', 
+                transform=plt.gca().transAxes, 
+                bbox=dict(facecolor='white', alpha=0.8))
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, 'wind_reward_scatter.png'), dpi=300)
+        plt.close()
+
 def save_metrics_summary(metrics: Dict, eval_metrics: Dict, save_dir: str):
     """Save a text summary of the training and evaluation metrics."""
     summary_path = os.path.join(save_dir, 'metrics_summary.txt')
@@ -220,15 +246,18 @@ def main():
         training_metrics = load_training_metrics(run_dir)
         try:
             eval_metrics = load_eval_metrics(run_dir)
+            # Generate plots and summary
+            print("Generating plots...")
+            plot_training_curves(training_metrics, plots_dir)
+            plot_reward_distributions(training_metrics, eval_metrics, plots_dir)
+            plot_evaluation_scatter(eval_metrics, plots_dir)  # Add scatter plot
+            save_metrics_summary(training_metrics, eval_metrics, plots_dir)
         except FileNotFoundError:
             print("No evaluation metrics found.")
             eval_metrics = {}
-        
-        # Generate plots and summary
-        print("Generating plots...")
-        plot_training_curves(training_metrics, plots_dir)
-        plot_reward_distributions(training_metrics, eval_metrics, plots_dir)
-        save_metrics_summary(training_metrics, eval_metrics, plots_dir)
+            # Generate only training plots
+            plot_training_curves(training_metrics, plots_dir)
+            save_metrics_summary(training_metrics, {}, plots_dir)
         
         print(f"Plots and summary saved in {plots_dir}")
         

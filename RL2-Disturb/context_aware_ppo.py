@@ -95,6 +95,11 @@ class ContextAwarePPO:
         self.rank = self.comm.Get_rank()
         self.size = self.comm.Get_size()
         
+        # Set up device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if self.rank == 0:
+            print(f"Using device: {self.device}")
+        
         # Create directories
         if self.rank == 0:
             os.makedirs('models', exist_ok=True)
@@ -106,6 +111,16 @@ class ContextAwarePPO:
             self.log_dir = os.path.join(self.run_dir, 'logs')
             os.makedirs(self.checkpoint_dir, exist_ok=True)
             os.makedirs(self.log_dir, exist_ok=True)
+        
+        # Broadcast run directories to all processes
+        if self.size > 1:
+            if self.rank == 0:
+                dirs = [self.run_dir, self.checkpoint_dir, self.log_dir]
+            else:
+                dirs = [None, None, None]
+            dirs = self.comm.bcast(dirs, root=0)
+            if self.rank != 0:
+                self.run_dir, self.checkpoint_dir, self.log_dir = dirs
         
         # Create environment
         if env_name == "CustomLunarLander-v2":
@@ -125,14 +140,14 @@ class ContextAwarePPO:
             input_dim=self.state_dim + self.action_dim + 1,
             hidden_dim=hidden_dim,
             context_dim=context_dim
-        )
+        ).to(self.device)
         
         self.policy = ContextAwarePolicy(
             state_dim=self.state_dim,
             context_dim=context_dim,
             hidden_dim=hidden_dim,
             action_dim=self.action_dim
-        )
+        ).to(self.device)
         
         # Separate optimizers for policy and context encoder
         self.policy_optimizer = torch.optim.Adam(
@@ -199,8 +214,8 @@ class ContextAwarePPO:
                     print(f"New target range: {self.target_range}")
     
     def get_action(self, state, context):
-        state = torch.FloatTensor(state).unsqueeze(0)
-        context = context.unsqueeze(0) if context is not None else torch.zeros(1, self.context_dim)
+        state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+        context = context.unsqueeze(0).to(self.device) if context is not None else torch.zeros(1, self.context_dim).to(self.device)
         
         with torch.no_grad():
             action_logits, value = self.policy(state, context)
@@ -227,7 +242,7 @@ class ContextAwarePPO:
         trajectory = np.zeros((max_steps, self.state_dim + self.action_dim + 1), dtype=np.float32)
         
         if context is None:
-            context = torch.zeros(self.context_dim)
+            context = torch.zeros(self.context_dim).to(self.device)
         
         episode_length = 0
         episode_reward = 0
@@ -272,7 +287,7 @@ class ContextAwarePPO:
         
         # Encode trajectory to get context
         if episode_length > 0:
-            trajectory_tensor = torch.from_numpy(trajectory).unsqueeze(1)  # [seq_len, 1, dim]
+            trajectory_tensor = torch.from_numpy(trajectory).unsqueeze(1).to(self.device)  # [seq_len, 1, dim]
             with torch.no_grad():
                 context, context_mean, context_log_std, wind_power, target_pos = self.context_encoder(trajectory_tensor)
                 context = context.squeeze(0)  # Remove batch dimension
@@ -295,16 +310,35 @@ class ContextAwarePPO:
             returns[t] = running_return
             
         # Convert to tensor and normalize
-        returns = torch.from_numpy(returns)
+        returns = torch.from_numpy(returns).to(self.device)
         returns = (returns - returns.mean()) / (returns.std() + 1e-8)
         return returns
     
+    def sync_gradients(self):
+        """Synchronize gradients across all MPI processes"""
+        for model in [self.context_encoder, self.policy]:
+            for param in model.parameters():
+                if param.grad is not None:
+                    # All-reduce gradients
+                    param_grad = param.grad.data.cpu().numpy()
+                    self.comm.Allreduce(MPI.IN_PLACE, param_grad, op=MPI.SUM)
+                    param_grad = param_grad / self.size
+                    param.grad.data = torch.from_numpy(param_grad).to(self.device)
+
+    def sync_networks(self):
+        """Synchronize network parameters across all MPI processes"""
+        for model in [self.context_encoder, self.policy]:
+            for param in model.parameters():
+                param_data = param.data.cpu().numpy()
+                self.comm.Bcast(param_data, root=0)
+                param.data = torch.from_numpy(param_data).to(self.device)
+
     def update_policy(self, all_states, all_actions, all_log_probs, all_returns, all_contexts, all_trajectories):
         # Convert all inputs to tensors efficiently
-        episodes_states = [torch.from_numpy(np.array(states, dtype=np.float32)) for states in all_states]
-        episodes_actions = [torch.from_numpy(np.array(actions, dtype=np.int64)) for actions in all_actions]
-        episodes_old_log_probs = [torch.from_numpy(np.array(log_probs, dtype=np.float32)) for log_probs in all_log_probs]
-        episodes_returns = [torch.from_numpy(np.array(returns, dtype=np.float32)) for returns in all_returns]
+        episodes_states = [torch.from_numpy(np.array(states, dtype=np.float32)).to(self.device) for states in all_states]
+        episodes_actions = [torch.from_numpy(np.array(actions, dtype=np.int64)).to(self.device) for actions in all_actions]
+        episodes_old_log_probs = [torch.from_numpy(np.array(log_probs, dtype=np.float32)).to(self.device) for log_probs in all_log_probs]
+        episodes_returns = [torch.from_numpy(np.array(returns, dtype=np.float32)).to(self.device) for returns in all_returns]
         
         num_episodes = len(episodes_states)
         total_actor_loss = 0
@@ -324,8 +358,8 @@ class ContextAwarePPO:
                 max_traj_len = max(traj.size(0) for traj in batch_trajectories)
                 
                 # Pad trajectories
-                padded_trajectories = torch.zeros(max_traj_len, actual_batch_size, batch_trajectories[0].size(-1))
-                trajectory_masks = torch.zeros(max_traj_len, actual_batch_size)
+                padded_trajectories = torch.zeros(max_traj_len, actual_batch_size, batch_trajectories[0].size(-1)).to(self.device)
+                trajectory_masks = torch.zeros(max_traj_len, actual_batch_size).to(self.device)
                 
                 for i, traj in enumerate(batch_trajectories):
                     traj_len = traj.size(0)
@@ -347,16 +381,20 @@ class ContextAwarePPO:
                 context_loss = self.context_kl_weight * kl_loss
                 self.context_optimizer.zero_grad()
                 context_loss.backward(retain_graph=True)
+                
+                # Synchronize context encoder gradients across processes
+                self.sync_gradients()
+                
                 self.context_optimizer.step()
                 
                 # Process states/actions/returns with detached context
                 max_len = max(episodes_states[idx].size(0) for idx in batch_indices)
                 
-                batch_states = torch.zeros(max_len, actual_batch_size, self.state_dim)
-                batch_actions = torch.zeros(max_len, actual_batch_size, dtype=torch.long)
-                batch_old_log_probs = torch.zeros(max_len, actual_batch_size)
-                batch_returns = torch.zeros(max_len, actual_batch_size)
-                batch_masks = torch.zeros(max_len, actual_batch_size)
+                batch_states = torch.zeros(max_len, actual_batch_size, self.state_dim).to(self.device)
+                batch_actions = torch.zeros(max_len, actual_batch_size, dtype=torch.long).to(self.device)
+                batch_old_log_probs = torch.zeros(max_len, actual_batch_size).to(self.device)
+                batch_returns = torch.zeros(max_len, actual_batch_size).to(self.device)
+                batch_masks = torch.zeros(max_len, actual_batch_size).to(self.device)
                 
                 for batch_idx, episode_idx in enumerate(batch_indices):
                     episode_len = episodes_states[episode_idx].size(0)
@@ -391,7 +429,14 @@ class ContextAwarePPO:
                 policy_loss = actor_loss + 0.5 * critic_loss
                 self.policy_optimizer.zero_grad()
                 policy_loss.backward()
+                
+                # Synchronize policy gradients across processes
+                self.sync_gradients()
+                
                 self.policy_optimizer.step()
+                
+                # Synchronize networks after updates
+                self.sync_networks()
                 
                 # Adjust KL weight based on KL divergence
                 if kl_loss < self.target_kl:
@@ -415,47 +460,92 @@ class ContextAwarePPO:
         
         return avg_actor_loss, avg_critic_loss, avg_context_loss
     
+    def collect_parallel_episodes(self, num_episodes_per_update=1):
+        """Collect episodes in parallel across MPI processes"""
+        # Each process collects its share of episodes
+        episodes_per_process = num_episodes_per_update // self.size
+        if self.rank < num_episodes_per_update % self.size:
+            episodes_per_process += 1
+            
+        # Local storage for this process
+        local_states = []
+        local_actions = []
+        local_log_probs = []
+        local_returns = []
+        local_contexts = []
+        local_trajectories = []
+        local_rewards = []
+        
+        # Collect episodes for this process
+        for _ in range(episodes_per_process):
+            states_ep, actions_ep, rewards_ep, log_probs_ep, dones_ep, values_ep, episode_reward, new_context, trajectory = self.collect_episode(None)
+            returns_ep = self.compute_returns(rewards_ep, dones_ep, values_ep)
+            
+            local_states.append(states_ep)
+            local_actions.append(actions_ep)
+            local_log_probs.append(log_probs_ep)
+            local_returns.append(returns_ep.tolist())
+            local_contexts.append(new_context)
+            local_trajectories.append(trajectory)
+            local_rewards.append(episode_reward)
+        
+        # Gather data from all processes
+        all_states = self.comm.gather(local_states, root=0)
+        all_actions = self.comm.gather(local_actions, root=0)
+        all_log_probs = self.comm.gather(local_log_probs, root=0)
+        all_returns = self.comm.gather(local_returns, root=0)
+        all_contexts = self.comm.gather(local_contexts, root=0)
+        all_trajectories = self.comm.gather(local_trajectories, root=0)
+        all_rewards = self.comm.gather(local_rewards, root=0)
+        
+        # Process 0 combines the data
+        if self.rank == 0:
+            all_states = [ep for proc_states in all_states for ep in proc_states]
+            all_actions = [ep for proc_actions in all_actions for ep in proc_actions]
+            all_log_probs = [ep for proc_log_probs in all_log_probs for ep in proc_log_probs]
+            all_returns = [ep for proc_returns in all_returns for ep in proc_returns]
+            all_contexts = [ep for proc_contexts in all_contexts for ep in proc_contexts]
+            all_trajectories = [ep for proc_trajectories in all_trajectories for ep in proc_trajectories]
+            all_rewards = [r for proc_rewards in all_rewards for r in proc_rewards]
+            
+            avg_reward = np.mean(all_rewards)
+            avg_length = np.mean([len(states) for states in all_states])
+        else:
+            all_states = None
+            all_actions = None
+            all_log_probs = None
+            all_returns = None
+            all_contexts = None
+            all_trajectories = None
+            avg_reward = None
+            avg_length = None
+            
+        # Broadcast the combined data to all processes
+        all_states = self.comm.bcast(all_states, root=0)
+        all_actions = self.comm.bcast(all_actions, root=0)
+        all_log_probs = self.comm.bcast(all_log_probs, root=0)
+        all_returns = self.comm.bcast(all_returns, root=0)
+        all_contexts = self.comm.bcast(all_contexts, root=0)
+        all_trajectories = self.comm.bcast(all_trajectories, root=0)
+        avg_reward = self.comm.bcast(avg_reward, root=0)
+        avg_length = self.comm.bcast(avg_length, root=0)
+        
+        return all_states, all_actions, all_log_probs, all_returns, all_contexts, all_trajectories, avg_reward, avg_length
+    
     def train_episode(self, num_episodes_per_update=1):
         # Update curriculum before episode
         self.update_curriculum()
         
-        # Single episode collection
-        states = []
-        actions = []
-        log_probs = []
-        returns = []
-        contexts = []
-        trajectories = []
+        # Collect episodes in parallel
+        all_states, all_actions, all_log_probs, all_returns, all_contexts, all_trajectories, avg_reward, avg_length = self.collect_parallel_episodes(num_episodes_per_update)
         
-        context = None  # Initial context estimate
-        
-        # Environment will sample new wind power and target position on reset
-        state = self.env.reset()[0]
-        if self.rank == 0:  # Only print from rank 0
-            print(f"\nNew wind power: {self.env.wind_power:.3f}")
-            print(f"New target position: {self.env.target_x:.3f}")
-        
-        # Collect single episode
-        states_ep, actions_ep, rewards_ep, log_probs_ep, dones_ep, values_ep, episode_reward, new_context, trajectory = self.collect_episode(context)
-        
-        # Compute returns for this episode
-        returns_ep = self.compute_returns(rewards_ep, dones_ep, values_ep)
-        
-        # Store episode data
-        states = [states_ep]
-        actions = [actions_ep]
-        log_probs = [log_probs_ep]
-        returns = [returns_ep.tolist()]
-        contexts = [new_context]
-        trajectories = [trajectory]
-        
-        # Update policy after single episode
+        # Update policy with collected data
         actor_loss, critic_loss, context_loss = self.update_policy(
-            states, actions, log_probs, returns,
-            contexts, trajectories
+            all_states, all_actions, all_log_probs, all_returns,
+            all_contexts, all_trajectories
         )
         
-        return episode_reward, len(states_ep), actor_loss, critic_loss, context_loss
+        return avg_reward, avg_length, actor_loss, critic_loss, context_loss
     
     def evaluate(self, num_episodes=10):
         if self.rank != 0:  # Only evaluate on rank 0

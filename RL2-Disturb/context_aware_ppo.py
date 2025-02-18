@@ -227,6 +227,8 @@ class ContextAwarePPO:
     
     def collect_episode(self, context=None):
         # Reset without sampling new wind speed (it's already set for this update)
+        self.env.target_x = np.random.uniform(0.2, 0.8)
+        self.env.wind_power = np.random.uniform(5.0, 10.0)
         state = self.env.reset(options={'sample_new_wind': False})[0]
         
         # Pre-allocate numpy arrays for max episode length
@@ -557,6 +559,8 @@ class ContextAwarePPO:
         context = None
         
         for episode in range(num_episodes):
+            self.env.target_x = np.random.uniform(0.0, 1.0)
+            self.env.wind_power = np.random.uniform(0.0, 15.0)
             state = self.env.reset()[0]
             actual_wind = self.env.wind_power
             actual_target = self.env.target_x

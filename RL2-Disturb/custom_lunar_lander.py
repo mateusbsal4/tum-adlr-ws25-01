@@ -32,8 +32,7 @@ class CustomLunarLander(LunarLanderTargetPos):
     def reset(self, seed=None, options=None):
         """Reset the environment with current target position."""
         # Update target position in parent class
-        self.target_x = np.random.uniform(0.2, 0.8)
-        self.wind_power = np.random.uniform(5.0, 10.0)
+        
         
         # Reset environment
         return super().reset(seed=seed, options=options)

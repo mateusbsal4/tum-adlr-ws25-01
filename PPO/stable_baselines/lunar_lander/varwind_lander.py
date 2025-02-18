@@ -176,25 +176,15 @@ class PPO:
         self.policy_losses = []
         self.entropy_losses = []
     
-    def compute_gae(self, rewards, values, dones, next_value):
-        advantages = torch.zeros_like(rewards)
-        last_gae = 0
-        
+    def train_on_batch(self, states, actions, values, log_probs, rewards, dones):
+        """Train on a batch of transitions using simple returns."""
+        # Calculate returns (discounted rewards)
+        returns = torch.zeros_like(rewards)
+        running_return = 0
         for t in reversed(range(len(rewards))):
-            if t == len(rewards) - 1:
-                next_non_terminal = 1.0 - dones[-1]
-                next_values = next_value
-            else:
-                next_non_terminal = 1.0 - dones[t + 1]
-                next_values = values[t + 1]
-            
-            delta = rewards[t] + self.gamma * next_values * next_non_terminal - values[t]
-            advantages[t] = last_gae = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae
-            
-        returns = advantages + values
-        return advantages, returns
-    
-    def train_on_batch(self, states, actions, old_values, old_log_probs, advantages, returns):
+            running_return = rewards[t] + (1 - dones[t]) * self.gamma * running_return
+            returns[t] = running_return
+
         for _ in range(self.n_epochs):
             # Generate random indices for minibatches
             indices = torch.randperm(len(states))
@@ -206,18 +196,16 @@ class PPO:
                 # Get minibatch
                 state_batch = states[batch_indices]
                 action_batch = actions[batch_indices]
-                old_values_batch = old_values[batch_indices]
-                old_log_probs_batch = old_log_probs[batch_indices]
-                advantages_batch = advantages[batch_indices]
+                old_log_probs_batch = log_probs[batch_indices]
                 returns_batch = returns[batch_indices]
                 
                 # Evaluate actions
-                log_probs, entropy, values = self.policy.evaluate_actions(state_batch, action_batch)
+                new_log_probs, entropy, values = self.policy.evaluate_actions(state_batch, action_batch)
                 
-                # Calculate policy loss
-                ratio = torch.exp(log_probs - old_log_probs_batch)
-                policy_loss_1 = advantages_batch * ratio
-                policy_loss_2 = advantages_batch * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
+                # Calculate policy loss using returns instead of advantages
+                ratio = torch.exp(new_log_probs - old_log_probs_batch)
+                policy_loss_1 = returns_batch * ratio
+                policy_loss_2 = returns_batch * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
                 policy_loss = -torch.min(policy_loss_1, policy_loss_2).mean()
                 
                 # Calculate value loss
@@ -294,16 +282,8 @@ class PPO:
                     state, _ = env.reset()
                     state = torch.FloatTensor(state).to(self.device)
             
-            # Calculate advantages and returns
-            with torch.no_grad():
-                next_value = self.policy.get_action(state)[1]
-                advantages, returns = self.compute_gae(rewards, values, dones, next_value)
-            
-            # Normalize advantages
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-            
             # Train on collected data
-            self.train_on_batch(states, actions, values, log_probs, advantages, returns)
+            self.train_on_batch(states, actions, values, log_probs, rewards, dones)
             
             # Evaluate if it's time and we have an evaluation environment
             if eval_env is not None and update > 0 and update % eval_freq == 0:
@@ -429,7 +409,7 @@ def train_model(env, run_name, total_timesteps):
             log_probs_tensor = torch.stack(log_probs)
             dones_tensor = torch.FloatTensor(dones).to(model.device)
             
-            # Update policy
+            # Train on collected data
             model.train_on_batch(states_tensor, actions_tensor, values_tensor, 
                                log_probs_tensor, rewards_tensor, dones_tensor)
             

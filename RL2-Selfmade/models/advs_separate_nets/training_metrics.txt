@@ -1,0 +1,12 @@
+Training Metrics Summary:
+-----------------------
+Total episodes: 1001
+Final episode length: 513.50
+Final reward: 53.32
+Best reward: 193.97
+Average reward: -5.92
+Average episode length: 377.71
+Final actor loss: -0.0002
+Final critic loss: 0.4926
+Average actor loss: -0.0014
+Average critic loss: 0.5233

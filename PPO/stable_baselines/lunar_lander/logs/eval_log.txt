@@ -1,3 +1,0 @@
-Using the latest model: models/best_model.zip
-Evaluation completed. Total reward: -45.445652681369424
-Plot saved as reward_log/eval/curve_model_20241216_150858

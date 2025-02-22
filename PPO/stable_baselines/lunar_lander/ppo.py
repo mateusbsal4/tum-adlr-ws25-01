@@ -1,127 +1,66 @@
-import argparse
 import os
-from time import sleep
-from datetime import datetime
-
-import matplotlib.pyplot as plt
-import numpy as np
+import time
+import imageio
+from render_browser import render_browser
 
 import gymnasium as gym
-from gymnasium.envs.registration import register
+import numpy as np
+import matplotlib.pyplot as plt
+
+
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import ProgressBarCallback, BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.results_plotter import load_results, ts2xy
-
-from lib.VarPosLander import LunarLanderTargetPos
-from lib.BestModelExtractor import SaveOnBestTrainingRewardCallback
-
-try:
-    from render_browser import render_browser
-except ImportError:
-    render_browser = None
+#from stable_baselines3.common.env_util import make_vec_env
 
 
+class SaveOnBestTrainingRewardCallback(BaseCallback):
+    """
+    Callback for saving a model (the check is done every ``check_freq`` steps)
+    based on the training reward (in practice, we recommend using ``EvalCallback``).
 
-# Register custom environment
-register(
-    id="LunarLanderTargetPos",
-    entry_point=LunarLanderTargetPos,
-)
+    :param check_freq: (int)
+    :param log_dir: (str) Path to the folder where the model will be saved.
+      It must contains the file created by the ``Monitor`` wrapper.
+    :param verbose: (int)
+    """
 
-def train(env_id, total_timesteps, log_rewards, model_dir, log_dir):
-    """Train the PPO agent on the specified environment."""
-    # create environment
-    env = gym.make(env_id, render_mode=None, target_x=5, target_y=5)
-    
-    # reward logging
-    timepoint = datetime.now().strftime("%Y%m%d_%H%M%S")     # Append date and time to the model save path and reward log
-    model_name = f"model_{timepoint}"
-    
-    if log_rewards:
-        log_dir = os.path.join(log_dir, "train", model_name)
-        os.makedirs(log_dir, exist_ok=True)
-        # if you want the reward plot, add --log_rewards as argument when you call file
-        env = Monitor(env, filename=log_dir)
-        # Create the callback: check every 1000 steps
-        callback = SaveOnBestTrainingRewardCallback(check_freq=1000, log_dir=log_dir)
-        
-    # create rl model
-    model = PPO("MlpPolicy", env, verbose=1)
-    if log_rewards:
-        model.learn(total_timesteps=total_timesteps, progress_bar = True, callback=callback)
-    else: 
-        model.learn(total_timesteps=total_timesteps, progress_bar = True)
-        
-    # save trained model
-    os.makedirs(model_dir, exist_ok=True)
-    model_save_path = os.path.join(model_dir, model_name)
-    model.save(model_save_path)
-    print(f"Trained Model successfully saved to {model_save_path}")
-    
-    #reward plot
-    if log_rewards:
-        plot_results(log_dir, model_name)
-    env.close()
+    def __init__(self, check_freq: int, log_dir: str, verbose=1):
+        super().__init__(verbose)
+        self.check_freq = check_freq
+        self.log_dir = log_dir
+        self.save_path = os.path.join(log_dir, "best_model")
+        self.best_mean_reward = -np.inf
 
+    def _init_callback(self) -> None:
+        # Create folder if needed
+        if self.save_path is not None:
+            os.makedirs(self.save_path, exist_ok=True)
 
-def evaluate(env_id, model_path, render_mode, log_reward):
-    """Evaluate a trained PPO agent in the specified environment."""
-    if render_mode == "browser" and render_browser is None:
-        raise ImportError("render_browser is not installed or available.")
+    def _on_step(self) -> bool:
+        if self.n_calls % self.check_freq == 0:
 
-    env_kwargs = {"target_x": 5, "target_y": 5}
-    env_kwargs["render_mode"] = render_mode
-    
-    # Ensure the latest model is loaded if model_path is default
-    if model_path == "models":
-        if not os.path.exists(model_path) or not os.listdir(model_path):
-            raise FileNotFoundError("No models found in the 'models' directory.")
-        model_path = max(
-            [os.path.join(model_path, f) for f in os.listdir(model_path)],
-            key=os.path.getctime
-        )
-        print(f"Using the latest model: {model_path}")
-    
-    env = gym.make(env_id, **env_kwargs)
-    model = PPO.load(model_path)
+            # Retrieve training reward
+            x, y = ts2xy(load_results(self.log_dir), "timesteps")
+            if len(x) > 0:
+                # Mean training reward over the last 100 episodes
+                mean_reward = np.mean(y[-100:])
+                if self.verbose > 0:
+                    print(f"Num timesteps: {self.num_timesteps}")
+                    print(
+                        f"Best mean reward: {self.best_mean_reward:.2f} - Last mean reward per episode: {mean_reward:.2f}"
+                    )
 
-    obs, info = env.reset()
-    episode_over = False
-    rewards = []
-    total_reward = 0
-    
-    while not episode_over:
-        if render_mode == "human":
-            env.render()
-        action, _ = model.predict(obs)
-        obs, reward, terminated, truncated, info = env.step(action)
-        total_reward += reward
-        rewards.append(reward)
-        episode_over = terminated or truncated
-        sleep(0.02)
-    env.close()
-    print(f"Evaluation completed. Total reward: {total_reward}")
-    
-    # Plot the data
-    plt.figure(figsize=(10, 6))
-    plt.plot(rewards, marker="o", linestyle="-", color="r")
-    plt.title("Reward during Evaluation Episode")
-    plt.xlabel("Timestep")
-    plt.ylabel("Reward")
-    plt.grid()
+                # New best model, you could save the agent here
+                if mean_reward > self.best_mean_reward:
+                    self.best_mean_reward = mean_reward
+                    # Example for saving best model
+                    if self.verbose > 0:
+                        print(f"Saving new best model to {self.save_path}.zip")
+                    self.model.save(self.save_path)
 
-    # Save the figure to a PNG file
-    print(os.listdir("models"))
-    model_name = "model_20241216_150858"
-    plot_path = f"reward_log/eval/curve_{model_name}"
-    os.makedirs("reward_log/eval", exist_ok=True)
-    plt.savefig(plot_path, dpi=300)  # dpi=300 for high-resolution
-    print(f"Plot saved as {plot_path}")
-
-    
-
-
+        return True
 
 
 def moving_average(values, window):
@@ -135,14 +74,13 @@ def moving_average(values, window):
     return np.convolve(values, weights, "valid")
 
 
-def plot_results(log_folder, model_name):
+def plot_results(log_folder, title="Learning Curve"):
     """
     plot the results
 
     :param log_folder: (str) the save location of the results to plot
     :param title: (str) the title of the task to plot
     """
-    title = f"{model_name} Learning Curve"
     x, y = ts2xy(load_results(log_folder), "timesteps")
     y = moving_average(y, window=50)
     # Truncate x
@@ -153,27 +91,148 @@ def plot_results(log_folder, model_name):
     plt.xlabel("Number of Timesteps")
     plt.ylabel("Rewards")
     plt.title(title + " Smoothed")
-    plot_path = os.path.join(log_folder, f"curve_{model_name}.png")
+    plot_path = os.path.join(log_folder, "learning_curve.png")  # Save path
     plt.savefig(plot_path)  # Save the plot to a file
     plt.close()  # Close the plot to free up memory
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Train or evaluate a PPO agent on the Lunar Lander environment.")
-    parser.add_argument("--mode", choices=["train", "eval"], required=True, help="Mode to run: train or eval.")
-    parser.add_argument("--render_mode", choices=["human", "rgb_array", "browser"], default="human", help="Rendering mode: human, rgb_array, or browser.")
-    parser.add_argument("--env_id", type=str, default="LunarLanderTargetPos", help="Gym environment ID.")
-    parser.add_argument("--model_path", type=str, default="models", help="Path to save or load the model.")
-    parser.add_argument("--log_path", type=str, default="reward_log", help="Path to save and plot the reward values.")
-    parser.add_argument("--total_timesteps", type=int, default=100_000, help="Total timesteps for training.")
-    parser.add_argument("--log_rewards", action="store_true", help="Log and plot rewards during evaluation.")
+@render_browser
+def test_policy():
+    # Create log dir
+    #log_dir = "monitor_logs/"
+    #os.makedirs(log_dir, exist_ok=True)
+    
+    # Create and wrap the environment
+    env = gym.make("LunarLander-v3", render_mode="rgb_array")
+    #env = Monitor(env, log_dir)
+    
+    # Train the agent
+    #model = PPO("MlpPolicy", env, verbose=1)
+    #time_steps = 5000000
+    #model.learn(total_timesteps=time_steps, progress_bar=True)
+    #model.save("ppo_lunar")
+    
+    # Reload the trained model
+    model = PPO.load("bestmodel")
+    
+    # Reset the environment and generate a GIF
+    obs, info = env.reset()
+    images = []  # To store frames for the GIF
+    
+    episode_over = False
+    while not episode_over:
+        action, _states = model.predict(obs)
+        obs, reward, terminated, truncated, info = env.step(action)
+        episode_over = terminated or truncated
+        # Append the rendered frame to the list
+        img = env.render()
+        images.append(img)
+        time.sleep(0.02)
+    
+    env.close()
+    
+    # Save the GIF
+    gif_path = "lander_policy.gif"
+    imageio.mimsave(
+        gif_path,
+        [np.array(img) for i, img in enumerate(images) if i % 2 == 0],  # Skip every other frame for efficiency
+        fps=25,
+    )
+    print(f"GIF saved at {gif_path}")
 
-    args = parser.parse_args()
+# Run the policy and serve it in a browser
+test_policy()
 
-    if args.mode == "train":
-        train(args.env_id, args.total_timesteps, args.log_rewards, args.model_path, args.log_path)
-    elif args.mode == "eval":
-        evaluate(args.env_id, args.model_path, args.render_mode, args.log_rewards)
 
-if __name__ == "__main__":
-    main()
+"""  Eval Callback version    """
+"""
+	import os
+	import time
+
+
+	import gymnasium as gym
+	import numpy as np
+	import matplotlib.pyplot as plt
+	from render_browser import render_browser
+
+	from stable_baselines3 import PPO
+	from stable_baselines3.common.callbacks import ProgressBarCallback, EvalCallback
+	from stable_baselines3.common.monitor import Monitor
+	from stable_baselines3.common.results_plotter import load_results, ts2xy
+	#from stable_baselines3.common.env_util import make_vec_env
+
+	def moving_average(values, window):
+
+	    Smooth values by doing a moving average
+	    :param values: (numpy array)
+	    :param window: (int)
+	    :return: (numpy array)
+
+	    weights = np.repeat(1.0, window) / window
+	    return np.convolve(values, weights, "valid")
+
+
+	def plot_results(log_folder, title="Learning Curve"):
+
+	    plot the results
+
+	    :param log_folder: (str) the save location of the results to plot
+	    :param title: (str) the title of the task to plot
+
+	    x, y = ts2xy(load_results(log_folder), "timesteps")
+	    y = moving_average(y, window=50)
+	    # Truncate x
+	    x = x[len(x) - len(y) :]
+
+	    fig = plt.figure(title)
+	    plt.plot(x, y)
+	    plt.xlabel("Number of Timesteps")
+	    plt.ylabel("Rewards")
+	    plt.title(title + " Smoothed")
+	    plot_path = os.path.join(log_folder, "learning_curve.png")  # Save path
+	    plt.savefig(plot_path)  # Save the plot to a file
+	    plt.close()  # Close the plot to free up memory
+
+
+	@render_browser
+	def test_policy():
+	    log_dir = "monitor_logs/"
+	    os.makedirs(log_dir, exist_ok=True)
+	    #env = gym.make("LunarLander-v3", render_mode = "rgb_array", enable_wind = True)
+	    env = gym.make("LunarLander-v3", render_mode = "rgb_array")
+	    env = Monitor(env, filename = "monitor_logs/")
+	    eval_callback = EvalCallback(env, best_model_save_path=log_dir,
+		                         log_path=log_dir, eval_freq=100, n_eval_episodes =5,
+		                         deterministic=True, render=False)
+	    # Load or train the model
+	    model = PPO("MlpPolicy", env, verbose=1)
+	    time_steps = 5000
+	    model.learn(total_timesteps=time_steps, progress_bar = True, callback = eval_callback)   
+	    model.save("ppo_lunar")
+
+	    # Reload the trained model
+
+	    model = PPO.load("ppo_lunar")
+	    #results_plotter.plot_results([log_dir], time_steps, results_plotter.X_TIMESTEPS, "PPO Lunar Lander")
+	    plot_results(log_dir)
+	    #plot_path = os.path.join(log_dir, "training_plot.png")  # Save path
+	    #plt.savefig(plot_path)  # Save the plot to a file
+	    #plt.close()  # Close the plot to free up memory
+	    #load_results(log_dir)
+	    # Reset the environment and run the policy
+	    obs, info = env.reset() 
+	    episode_over = False
+	    while not episode_over:
+		action, _states = model.predict(obs)        #ppo policy
+		obs, reward, terminated, truncated, info = env.step(action)
+		episode_over = terminated or truncated
+		#print("X coord: ", obs[0])
+		# Yield the rendered frame as a NumPy array
+		yield env.render()
+		time.sleep(0.02)
+	    env.close()
+
+	# Run the policy and serve it in a browser
+	test_policy()
+
+"""

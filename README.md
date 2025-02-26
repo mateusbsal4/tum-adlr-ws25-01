@@ -1,94 +1,116 @@
-# RL² for Parameter Identification with Unknown Disturbances
+# Variable Target Lunar Lander with RL2-PPO
 
-This repository demonstrates the use of RL² (Reinforcement Learning with Recurrent Mechanisms) for **parameter identification** in systems with **unknown disturbances**. The goal is to utilize RL²'s meta-learning capabilities to identify parameters of a dynamic system while accounting for stochastic or deterministic disturbances that impact the process.
+This project implements a modified version of OpenAI Gym’s LunarLander environment where the landing target position can be varied. The agent is trained using PPO (Proximal Policy Optimization) with a GRU-based policy network to handle the variable target positions. The main implementation is contained in the RL2-Selfmade directory, and a regular PPO implementation from Stable-Baselines3 is provided in the PPO directory for comparison purposes.
 
----
+## Project Structure
 
-## **Key Features**
-- **Meta-Reinforcement Learning:**
-  - RL² uses a recurrent policy that processes observation histories to adapt to new tasks during inference.
-  - This makes it ideal for environments with variability or incomplete prior knowledge.
+- `RL2-Selfmade/var_lander_gym.py`: Base environment with variable target position functionality
+- `RL2-Selfmade/custom_lunar_lander.py`: Custom wrapper for the variable target lander
+- `RL2-Selfmade/lunar_lander_rl2.py`: Main training script with RL2-PPO implementation
+- `RL2-Selfmade/RL2PPO.py`: Implementation of augmented PPO algorithm with GRU-based policy network
+- `RL2-Selfmade/plot_training_metrics.py`: Utility script for plotting training metrics
 
-- **Parameter Identification with Unknown Disturbances:**
-  - Our framework estimates system parameters using simulated environments with randomized, unknown disturbances.
-  - The methodology assumes limited prior knowledge of the disturbance characteristics, challenging the agent to infer and adapt online.
-
-- **Flexible Environment Support:**
-  - Includes support for environments like Lunar Lander with modified dynamics and noise injection.
-  - Easily extensible to other OpenAI Gym-like environments or custom domains.
-
----
-
-## **Workflow**
-
-The project consists of the following pipeline:
-
-1. **Environment Setup:**
-   - Define a dynamic environment with configurable parameters and disturbance models (e.g., random noise, time-varying effects).
-   - Example: Lunar Lander with randomized wind forces and gravity perturbations.
-
-2. **RL² Training:**
-   - Train a recurrent policy using Proximal Policy Optimization (PPO) or another RL algorithm.
-   - The policy learns to identify task parameters by leveraging historical observations.
-
-3. **Evaluation:**
-   - Evaluate the trained policy in environments with unseen disturbances.
-   - Compare performance with traditional methods (e.g., PPO).
-
----
-
-## **Repository Structure**
-
-```plaintext
-.
-|-- rl2/
-|   |-- agents/               # RL² agent implementations (PPO, RNN policies)
-|   |-- preprocessing/        # Modules for input preprocessing (e.g., one-hot encoding)
-|   |-- environments/         # Custom and adapted environments
-|   |-- utils/                # Helper functions for training and evaluation
-|
-|-- experiments/
-|   |-- lunar_lander/         # Configurations and scripts for Lunar Lander tasks
-|   |-- results/              # Logs and trained model checkpoints
-|
-|-- tests/                    # Unit tests for all major modules
-|-- README.md                 # Project documentation
-```
-
----
-
-## **Installation**
+## Requirements
 
 ```bash
-# Clone the repository
-$ git clone https://github.com/mateusbsal4/tum-adlr-ws25-01.git
-$ cd tum-adlr-ws25-01
-
-# Install required dependencies
-
+pip install gymnasium[box2d]
+pip install torch
+pip install mpi4py
+pip install matplotlib
+pip install numpy
 ```
 
----
-
-## **Quickstart**
-
-### Train the RL² Agent on Lunar Lander
+## Training
 
 
----
+```bash
+cd RL2-Selfmade
+```
 
-## **Key Results**
+To train the agent with multiple workers using MPI:
 
-1. **Lunar Lander Experiments:**
-   
-2. **Generalization:**
+```bash
+mpirun -np 8 python lunar_lander_rl2.py
+```
 
-3. **Efficiency:**
+Options:
+- `--run-name NAME`: Specify custom name for the training run
+- `--render`: Enable rendering during training
+- `--resume-from DIR`: Resume training from latest model in specified directory
 
----
+## Resuming Training
 
-## **References**
-- RL²: Wang, Jane X., et al. "Learning to reinforcement learn." *arXiv preprint arXiv:1611.05763* (2016).
-- OpenAI Gym: Brockman, Greg, et al. "OpenAI Gym." *arXiv preprint arXiv:1606.01540* (2016).
+To resume training from a previous run:
 
----
+```bash
+mpirun -np 8 python lunar_lander_rl2.py --resume-from run_name
+```
+
+## Plotting Training Metrics
+
+To visualize training results:
+
+```bash
+python plot_training_metrics.py run_name
+```
+
+This will:
+1. List available log files in the run directory
+2. Let you select which log file to analyze
+3. Generate plots for:
+   - Episode lengths
+   - Training rewards
+   - Actor losses
+   - Critic losses
+
+## Project Features
+
+- Distributed training with MPI
+- Variable landing target positions
+- GRU-based policy network for temporal dependencies
+- Automatic checkpoint saving
+- Training metrics logging
+- Visualization tools
+- Resume training capability
+
+## Directory Structure
+
+```
+RL2-SelfMade/
+├── models/
+│   └── run_name/
+│       ├── checkpoints/
+│       │   └── model_checkpoints.pth
+│       ├── logs/
+│       │   └── training_logs.log
+│       └── best_model.pth
+├── RL2PPO.py
+├── custom_lunar_lander.py
+├── lunar_lander_rl2.py
+├── plot_training_metrics.py
+└── var_lander_gym.py
+```
+
+## Training Output
+
+The training script will create a directory under `models/` with:
+- Checkpoint models saved periodically
+- Best performing models
+- Training logs
+- Reward plots
+- Training metrics summary
+
+## Monitoring Training
+
+During training, the script outputs:
+- Global episode number
+- Average episode length
+- Average training reward
+- Actor and critic losses
+- Target positions and landing coordinates
+- Evaluation results at regular intervals
+
+## Evaluation
+
+The agent is evaluated periodically during training using a fixed target position (center) for consistent comparison. 
+

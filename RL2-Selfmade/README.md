@@ -1,13 +1,14 @@
 # Variable Target Lunar Lander with RL2-PPO
 
-This project implements a modified version of OpenAI Gym's LunarLander environment where the landing target position can be varied. The agent is trained using PPO (Proximal Policy Optimization) with a GRU-based policy network to handle the variable target positions.
+This project implements a modified version of OpenAI Gym’s LunarLander environment where the landing target position can be varied. The agent is trained using PPO (Proximal Policy Optimization) with a GRU-based policy network to handle the variable target positions. The main implementation is contained in the RL2-Selfmade directory, and a regular PPO implementation from Stable-Baselines3 is provided in the PPO directory for comparison purposes.
 
 ## Project Structure
 
-- `var_lander_gym.py`: Base environment with variable target position functionality
-- `custom_lunar_lander.py`: Custom wrapper for the variable target lander
-- `lunar_lander_rl2.py`: Main training script with RL2-PPO implementation
-- `plot_training_metrics.py`: Utility script for plotting training metrics
+- `RL2-Selfmade/var_lander_gym.py`: Base environment with variable target position functionality
+- `RL2-Selfmade/custom_lunar_lander.py`: Custom wrapper for the variable target lander
+- `RL2-Selfmade/lunar_lander_rl2.py`: Main training script with RL2-PPO implementation
+- `RL2-Selfmade/RL2PPO.py`: Implementation of augmented PPO algorithm with GRU-based policy network
+- `RL2-Selfmade/plot_training_metrics.py`: Utility script for plotting training metrics
 
 ## Requirements
 
@@ -20,6 +21,11 @@ pip install numpy
 ```
 
 ## Training
+
+
+```bash
+cd RL2-Selfmade
+```
 
 To train the agent with multiple workers using MPI:
 
@@ -70,7 +76,7 @@ This will:
 ## Directory Structure
 
 ```
-.
+RL2-SelfMade/
 ├── models/
 │   └── run_name/
 │       ├── checkpoints/
@@ -78,10 +84,11 @@ This will:
 │       ├── logs/
 │       │   └── training_logs.log
 │       └── best_model.pth
-├── var_lander_gym.py
+├── RL2PPO.py
 ├── custom_lunar_lander.py
 ├── lunar_lander_rl2.py
-└── plot_training_metrics.py
+├── plot_training_metrics.py
+└── var_lander_gym.py
 ```
 
 ## Training Output

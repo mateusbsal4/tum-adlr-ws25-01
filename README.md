@@ -116,11 +116,11 @@ The agent is evaluated periodically during training using a fixed target positio
 
 ## Results 
 
-Reward curves for agents trained in the Lunar Lander environment under shifting target scenarios with wind disturbances.
+Reward curves for agents trained in the Lunar Lander environment under a shifting target scenario with wind disturbances.
 
-The first image below shows our VDE-augmented agent, whose performance improves from an initial evaluation reward of –228 to +113 after just 350 policy updates.
+The left plot displays our VDE-augmented agent, whose performance improves from an initial evaluation reward of –228 to +113 after just 350 policy updates.
 
-The second image displays the performance of an agent trained with the standard PPO implementation from Stable Baselines 3. Although the baseline eventually reaches a peak training reward of 93 after 2300 episodes, it experiences a catastrophic performance collapse, falling to near-zero reward by episode 3000.
+The right plot shows an agent trained using the standard PPO implementation from Stable Baselines 3. Although this baseline eventually reaches a peak training reward of 93 after 2300 episodes, its performance subsequently collapses, falling to near-zero reward by episode 3000.
 
 <img src="https://github.com/user-attachments/assets/5ab62a8a-9620-4048-953e-966e89767dd0" alt="rl2_vde" width="400px">
 

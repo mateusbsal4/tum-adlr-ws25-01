@@ -122,9 +122,9 @@ The first image below shows our VDE-augmented agent, whose performance improves 
 
 The second image displays the performance of an agent trained with the standard PPO implementation from Stable Baselines 3. Although the baseline eventually reaches a peak training reward of 93 after 2300 episodes, it experiences a catastrophic performance collapse, falling to near-zero reward by episode 3000.
 
-![rl2_vde](https://github.com/user-attachments/assets/5ab62a8a-9620-4048-953e-966e89767dd0)
+<img src="https://github.com/user-attachments/assets/5ab62a8a-9620-4048-953e-966e89767dd0" alt="rl2_vde" width="400px">
 
-![baseline_ppo](https://github.com/user-attachments/assets/f2c6ef2c-cfa9-4d1d-b485-ee193ab49b10)
+<img src="https://github.com/user-attachments/assets/f2c6ef2c-cfa9-4d1d-b485-ee193ab49b10" alt="baseline_ppo" width="400px">
 
 
 

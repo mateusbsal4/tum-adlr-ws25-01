@@ -114,3 +114,21 @@ During training, the script outputs:
 
 The agent is evaluated periodically during training using a fixed target position (center) for consistent comparison. 
 
+## Results 
+
+Reward curves for agents trained in the Lunar Lander environment under shifting target scenarios with wind disturbances.
+
+The first image below shows our VDE-augmented agent, whose performance improves from an initial evaluation reward of –228 to +113 after just 350 policy updates.
+
+The second image displays the performance of an agent trained with the standard PPO implementation from Stable Baselines 3. Although the baseline eventually reaches a peak training reward of 93 after 2300 episodes, it experiences a catastrophic performance collapse, falling to near-zero reward by episode 3000.
+
+![rl2_vde](https://github.com/user-attachments/assets/5ab62a8a-9620-4048-953e-966e89767dd0)
+
+![baseline_ppo](https://github.com/user-attachments/assets/f2c6ef2c-cfa9-4d1d-b485-ee193ab49b10)
+
+
+
+
+
+
+
